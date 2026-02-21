@@ -1,0 +1,372 @@
+refresh_tree: project_id=1, schedules trovati: 3
+  Schedule: activity_id=1, ore=50.0, budget=0.0
+  Schedule: activity_id=2, ore=100.0, budget=0.0
+  Schedule: activity_id=None, ore=100.0, budget=1000.0
+Attività caricate per project_id=1: 3
+  Activity: id=6, name=DISEGNI
+  Activity: id=2, name=FEM
+  Activity: id=1, name=PROGETTAZIONE
+Cerco schedule per activity_id=6
+Cerco schedule per activity_id=2
+  MATCH trovato! schedule_id=4, ore=100.0, budget=0.0
+Cerco schedule per activity_id=1
+  MATCH trovato! schedule_id=3, ore=50.0, budget=0.0
+refresh_tree: project_id=3, schedules trovati: 3
+  Schedule: activity_id=10, ore=100.0, budget=500.0
+  Schedule: activity_id=11, ore=20.0, budget=500.0
+  Schedule: activity_id=None, ore=100.0, budget=0.0
+Attività caricate per project_id=3: 5
+  Activity: id=9, name=CORREZIONI
+  Activity: id=10, name=DISEGNI
+  Activity: id=8, name=PROGETTAZIONE
+  Activity: id=7, name=STUDIO LAYOUT
+  Activity: id=11, name=TEST2
+Cerco schedule per activity_id=9
+Cerco schedule per activity_id=10
+  MATCH trovato! schedule_id=7, ore=100.0, budget=500.0
+Cerco schedule per activity_id=8
+Cerco schedule per activity_id=7
+Cerco schedule per activity_id=11
+  MATCH trovato! schedule_id=8, ore=20.0, budget=500.0
+refresh_tree: project_id=3, schedules trovati: 3
+  Schedule: activity_id=10, ore=100.0, budget=500.0
+  Schedule: activity_id=11, ore=20.0, budget=500.0
+  Schedule: activity_id=None, ore=100.0, budget=0.0
+Attività caricate per project_id=3: 5
+  Activity: id=9, name=CORREZIONI
+  Activity: id=10, name=DISEGNI
+  Activity: id=8, name=PROGETTAZIONE
+  Activity: id=7, name=STUDIO LAYOUT
+  Activity: id=11, name=TEST2
+Cerco schedule per activity_id=9
+Cerco schedule per activity_id=10
+  MATCH trovato! schedule_id=7, ore=100.0, budget=500.0
+Cerco schedule per activity_id=8
+Cerco schedule per activity_id=7
+Cerco schedule per activity_id=11
+  MATCH trovato! schedule_id=8, ore=20.0, budget=500.0
+refresh_tree: project_id=3, schedules trovati: 3
+  Schedule: activity_id=10, ore=100.0, budget=500.0
+  Schedule: activity_id=11, ore=20.0, budget=500.0
+  Schedule: activity_id=None, ore=100.0, budget=0.0
+Attività caricate per project_id=3: 5
+  Activity: id=9, name=CORREZIONI
+  Activity: id=10, name=DISEGNI
+  Activity: id=8, name=PROGETTAZIONE
+  Activity: id=7, name=STUDIO LAYOUT
+  Activity: id=11, name=TEST2
+Cerco schedule per activity_id=9
+Cerco schedule per activity_id=10
+  MATCH trovato! schedule_id=7, ore=100.0, budget=500.0
+Cerco schedule per activity_id=8
+Cerco schedule per activity_id=7
+Cerco schedule per activity_id=11
+  MATCH trovato! schedule_id=8, ore=20.0, budget=500.0
+refresh_tree: project_id=3, schedules trovati: 3
+  Schedule: activity_id=10, ore=100.0, budget=500.0
+  Schedule: activity_id=11, ore=20.0, budget=500.0
+  Schedule: activity_id=None, ore=100.0, budget=0.0
+Attività caricate per project_id=3: 5
+  Activity: id=9, name=CORREZIONI
+  Activity: id=10, name=DISEGNI
+  Activity: id=8, name=PROGETTAZIONE
+  Activity: id=7, name=STUDIO LAYOUT
+  Activity: id=11, name=TEST2
+Cerco schedule per activity_id=9
+Cerco schedule per activity_id=10
+  MATCH trovato! schedule_id=7, ore=100.0, budget=500.0
+Cerco schedule per activity_id=8
+Cerco schedule per activity_id=7
+Cerco schedule per activity_id=11
+  MATCH trovato! schedule_id=8, ore=20.0, budget=500.0
+refresh_tree: project_id=3, schedules trovati: 3
+  Schedule: activity_id=10, ore=100.0, budget=500.0
+  Schedule: activity_id=11, ore=20.0, budget=500.0
+  Schedule: activity_id=None, ore=100.0, budget=0.0
+Attività caricate per project_id=3: 5
+  Activity: id=9, name=CORREZIONI
+  Activity: id=10, name=DISEGNI
+  Activity: id=8, name=PROGETTAZIONE
+  Activity: id=7, name=STUDIO LAYOUT
+  Activity: id=11, name=TEST2
+Cerco schedule per activity_id=9
+Cerco schedule per activity_id=10
+  MATCH trovato! schedule_id=7, ore=100.0, budget=500.0
+Cerco schedule per activity_id=8
+Cerco schedule per activity_id=7
+Cerco schedule per activity_id=11
+  MATCH trovato! schedule_id=8, ore=20.0, budget=500.0
+refresh_tree: project_id=1, schedules trovati: 3
+  Schedule: activity_id=1, ore=50.0, budget=0.0
+  Schedule: activity_id=2, ore=100.0, budget=0.0
+  Schedule: activity_id=None, ore=100.0, budget=1000.0
+Attività caricate per project_id=1: 3
+  Activity: id=6, name=DISEGNI
+  Activity: id=2, name=FEM
+  Activity: id=1, name=PROGETTAZIONE
+Cerco schedule per activity_id=6
+Cerco schedule per activity_id=2
+  MATCH trovato! schedule_id=4, ore=100.0, budget=0.0
+Cerco schedule per activity_id=1
+  MATCH trovato! schedule_id=3, ore=50.0, budget=0.0
+refresh_tree: project_id=3, schedules trovati: 3
+  Schedule: activity_id=10, ore=100.0, budget=500.0
+  Schedule: activity_id=11, ore=20.0, budget=500.0
+  Schedule: activity_id=None, ore=100.0, budget=0.0
+Attività caricate per project_id=3: 5
+  Activity: id=9, name=CORREZIONI
+  Activity: id=10, name=DISEGNI
+  Activity: id=8, name=PROGETTAZIONE
+  Activity: id=7, name=STUDIO LAYOUT
+  Activity: id=11, name=TEST2
+Cerco schedule per activity_id=9
+Cerco schedule per activity_id=10
+  MATCH trovato! schedule_id=7, ore=100.0, budget=500.0
+Cerco schedule per activity_id=8
+Cerco schedule per activity_id=7
+Cerco schedule per activity_id=11
+  MATCH trovato! schedule_id=8, ore=20.0, budget=500.0
+refresh_tree: project_id=3, schedules trovati: 3
+  Schedule: activity_id=10, ore=100.0, budget=500.0
+  Schedule: activity_id=11, ore=20.0, budget=500.0
+  Schedule: activity_id=None, ore=100.0, budget=0.0
+Attività caricate per project_id=3: 5
+  Activity: id=9, name=CORREZIONI
+  Activity: id=10, name=DISEGNI
+  Activity: id=8, name=PROGETTAZIONE
+  Activity: id=7, name=STUDIO LAYOUT
+  Activity: id=11, name=TEST2
+Cerco schedule per activity_id=9
+Cerco schedule per activity_id=10
+  MATCH trovato! schedule_id=7, ore=100.0, budget=500.0
+Cerco schedule per activity_id=8
+Cerco schedule per activity_id=7
+Cerco schedule per activity_id=11
+  MATCH trovato! schedule_id=8, ore=20.0, budget=500.0
+refresh_tree: project_id=3, schedules trovati: 3
+  Schedule: activity_id=10, ore=100.0, budget=500.0
+  Schedule: activity_id=11, ore=20.0, budget=500.0
+  Schedule: activity_id=None, ore=100.0, budget=0.0
+Attività caricate per project_id=3: 5
+  Activity: id=9, name=CORREZIONI
+  Activity: id=10, name=DISEGNI
+  Activity: id=8, name=PROGETTAZIONE
+  Activity: id=7, name=STUDIO LAYOUT
+  Activity: id=11, name=TEST2
+Cerco schedule per activity_id=9
+Cerco schedule per activity_id=10
+  MATCH trovato! schedule_id=7, ore=100.0, budget=500.0
+Cerco schedule per activity_id=8
+Cerco schedule per activity_id=7
+Cerco schedule per activity_id=11
+  MATCH trovato! schedule_id=8, ore=20.0, budget=500.0
+refresh_tree: project_id=3, schedules trovati: 4
+  Schedule: activity_id=10, ore=100.0, budget=500.0
+  Schedule: activity_id=9, ore=10.0, budget=100.0
+  Schedule: activity_id=11, ore=20.0, budget=500.0
+  Schedule: activity_id=None, ore=100.0, budget=0.0
+Attività caricate per project_id=3: 5
+  Activity: id=9, name=CORREZIONI
+  Activity: id=10, name=DISEGNI
+  Activity: id=8, name=PROGETTAZIONE
+  Activity: id=7, name=STUDIO LAYOUT
+  Activity: id=11, name=TEST2
+Cerco schedule per activity_id=9
+  MATCH trovato! schedule_id=9, ore=10.0, budget=100.0
+Cerco schedule per activity_id=10
+  MATCH trovato! schedule_id=7, ore=100.0, budget=500.0
+Cerco schedule per activity_id=8
+Cerco schedule per activity_id=7
+Cerco schedule per activity_id=11
+  MATCH trovato! schedule_id=8, ore=20.0, budget=500.0
+refresh_tree: project_id=3, schedules trovati: 4
+  Schedule: activity_id=10, ore=100.0, budget=500.0
+  Schedule: activity_id=9, ore=10.0, budget=100.0
+  Schedule: activity_id=11, ore=20.0, budget=500.0
+  Schedule: activity_id=None, ore=100.0, budget=0.0
+Attività caricate per project_id=3: 5
+  Activity: id=9, name=CORREZIONI
+  Activity: id=10, name=DISEGNI
+  Activity: id=8, name=PROGETTAZIONE
+  Activity: id=7, name=STUDIO LAYOUT
+  Activity: id=11, name=TEST2
+Cerco schedule per activity_id=9
+  MATCH trovato! schedule_id=9, ore=10.0, budget=100.0
+Cerco schedule per activity_id=10
+  MATCH trovato! schedule_id=7, ore=100.0, budget=500.0
+Cerco schedule per activity_id=8
+Cerco schedule per activity_id=7
+Cerco schedule per activity_id=11
+  MATCH trovato! schedule_id=8, ore=20.0, budget=500.0
+refresh_tree: project_id=3, schedules trovati: 4
+  Schedule: activity_id=10, ore=100.0, budget=500.0
+  Schedule: activity_id=9, ore=10.0, budget=100.0
+  Schedule: activity_id=11, ore=20.0, budget=500.0
+  Schedule: activity_id=None, ore=100.0, budget=0.0
+Attività caricate per project_id=3: 5
+  Activity: id=9, name=CORREZIONI
+  Activity: id=10, name=DISEGNI
+  Activity: id=8, name=PROGETTAZIONE
+  Activity: id=7, name=STUDIO LAYOUT
+  Activity: id=11, name=TEST2
+Cerco schedule per activity_id=9
+  MATCH trovato! schedule_id=9, ore=10.0, budget=100.0
+Cerco schedule per activity_id=10
+  MATCH trovato! schedule_id=7, ore=100.0, budget=500.0
+Cerco schedule per activity_id=8
+Cerco schedule per activity_id=7
+Cerco schedule per activity_id=11
+  MATCH trovato! schedule_id=8, ore=20.0, budget=500.0
+refresh_tree: project_id=3, schedules trovati: 4
+  Schedule: activity_id=10, ore=100.0, budget=500.0
+  Schedule: activity_id=9, ore=10.0, budget=100.0
+  Schedule: activity_id=11, ore=20.0, budget=500.0
+  Schedule: activity_id=None, ore=100.0, budget=0.0
+Attività caricate per project_id=3: 5
+  Activity: id=9, name=CORREZIONI
+  Activity: id=10, name=DISEGNI
+  Activity: id=8, name=PROGETTAZIONE
+  Activity: id=7, name=STUDIO LAYOUT
+  Activity: id=11, name=TEST2
+Cerco schedule per activity_id=9
+  MATCH trovato! schedule_id=9, ore=10.0, budget=100.0
+Cerco schedule per activity_id=10
+  MATCH trovato! schedule_id=7, ore=100.0, budget=500.0
+Cerco schedule per activity_id=8
+Cerco schedule per activity_id=7
+Cerco schedule per activity_id=11
+  MATCH trovato! schedule_id=8, ore=20.0, budget=500.0
+refresh_tree: project_id=3, schedules trovati: 5
+  Schedule: activity_id=8, ore=20.0, budget=0.0
+  Schedule: activity_id=10, ore=100.0, budget=500.0
+  Schedule: activity_id=9, ore=10.0, budget=100.0
+  Schedule: activity_id=11, ore=20.0, budget=500.0
+  Schedule: activity_id=None, ore=100.0, budget=0.0
+Attività caricate per project_id=3: 5
+  Activity: id=9, name=CORREZIONI
+  Activity: id=10, name=DISEGNI
+  Activity: id=8, name=PROGETTAZIONE
+  Activity: id=7, name=STUDIO LAYOUT
+  Activity: id=11, name=TEST2
+Cerco schedule per activity_id=9
+  MATCH trovato! schedule_id=9, ore=10.0, budget=100.0
+Cerco schedule per activity_id=10
+  MATCH trovato! schedule_id=7, ore=100.0, budget=500.0
+Cerco schedule per activity_id=8
+  MATCH trovato! schedule_id=10, ore=20.0, budget=0.0
+Cerco schedule per activity_id=7
+Cerco schedule per activity_id=11
+  MATCH trovato! schedule_id=8, ore=20.0, budget=500.0
+refresh_tree: project_id=3, schedules trovati: 5
+  Schedule: activity_id=8, ore=20.0, budget=0.0
+  Schedule: activity_id=10, ore=100.0, budget=500.0
+  Schedule: activity_id=9, ore=10.0, budget=100.0
+  Schedule: activity_id=11, ore=20.0, budget=500.0
+  Schedule: activity_id=None, ore=100.0, budget=0.0
+Attività caricate per project_id=3: 5
+  Activity: id=9, name=CORREZIONI
+  Activity: id=10, name=DISEGNI
+  Activity: id=8, name=PROGETTAZIONE
+  Activity: id=7, name=STUDIO LAYOUT
+  Activity: id=11, name=TEST2
+Cerco schedule per activity_id=9
+  MATCH trovato! schedule_id=9, ore=10.0, budget=100.0
+Cerco schedule per activity_id=10
+  MATCH trovato! schedule_id=7, ore=100.0, budget=500.0
+Cerco schedule per activity_id=8
+  MATCH trovato! schedule_id=10, ore=20.0, budget=0.0
+Cerco schedule per activity_id=7
+Cerco schedule per activity_id=11
+  MATCH trovato! schedule_id=8, ore=20.0, budget=500.0
+refresh_tree: project_id=3, schedules trovati: 6
+  Schedule: activity_id=7, ore=100.0, budget=100.0
+  Schedule: activity_id=8, ore=20.0, budget=0.0
+  Schedule: activity_id=10, ore=100.0, budget=500.0
+  Schedule: activity_id=9, ore=10.0, budget=100.0
+  Schedule: activity_id=11, ore=20.0, budget=500.0
+  Schedule: activity_id=None, ore=100.0, budget=0.0
+Attività caricate per project_id=3: 5
+  Activity: id=9, name=CORREZIONI
+  Activity: id=10, name=DISEGNI
+  Activity: id=8, name=PROGETTAZIONE
+  Activity: id=7, name=STUDIO LAYOUT
+  Activity: id=11, name=TEST2
+Cerco schedule per activity_id=9
+  MATCH trovato! schedule_id=9, ore=10.0, budget=100.0
+Cerco schedule per activity_id=10
+  MATCH trovato! schedule_id=7, ore=100.0, budget=500.0
+Cerco schedule per activity_id=8
+  MATCH trovato! schedule_id=10, ore=20.0, budget=0.0
+Cerco schedule per activity_id=7
+  MATCH trovato! schedule_id=11, ore=100.0, budget=100.0
+Cerco schedule per activity_id=11
+  MATCH trovato! schedule_id=8, ore=20.0, budget=500.0
+refresh_tree: project_id=3, schedules trovati: 6
+  Schedule: activity_id=7, ore=100.0, budget=100.0
+  Schedule: activity_id=8, ore=20.0, budget=0.0
+  Schedule: activity_id=10, ore=100.0, budget=500.0
+  Schedule: activity_id=9, ore=10.0, budget=100.0
+  Schedule: activity_id=11, ore=20.0, budget=500.0
+  Schedule: activity_id=None, ore=100.0, budget=0.0
+Attività caricate per project_id=3: 5
+  Activity: id=9, name=CORREZIONI
+  Activity: id=10, name=DISEGNI
+  Activity: id=8, name=PROGETTAZIONE
+  Activity: id=7, name=STUDIO LAYOUT
+  Activity: id=11, name=TEST2
+Cerco schedule per activity_id=9
+  MATCH trovato! schedule_id=9, ore=10.0, budget=100.0
+Cerco schedule per activity_id=10
+  MATCH trovato! schedule_id=7, ore=100.0, budget=500.0
+Cerco schedule per activity_id=8
+  MATCH trovato! schedule_id=10, ore=20.0, budget=0.0
+Cerco schedule per activity_id=7
+  MATCH trovato! schedule_id=11, ore=100.0, budget=100.0
+Cerco schedule per activity_id=11
+  MATCH trovato! schedule_id=8, ore=20.0, budget=500.0
+refresh_tree: project_id=3, schedules trovati: 6
+  Schedule: activity_id=7, ore=100.0, budget=100.0
+  Schedule: activity_id=8, ore=20.0, budget=50.0
+  Schedule: activity_id=10, ore=100.0, budget=500.0
+  Schedule: activity_id=9, ore=10.0, budget=100.0
+  Schedule: activity_id=11, ore=20.0, budget=500.0
+  Schedule: activity_id=None, ore=100.0, budget=0.0
+Attività caricate per project_id=3: 5
+  Activity: id=9, name=CORREZIONI
+  Activity: id=10, name=DISEGNI
+  Activity: id=8, name=PROGETTAZIONE
+  Activity: id=7, name=STUDIO LAYOUT
+  Activity: id=11, name=TEST2
+Cerco schedule per activity_id=9
+  MATCH trovato! schedule_id=9, ore=10.0, budget=100.0
+Cerco schedule per activity_id=10
+  MATCH trovato! schedule_id=7, ore=100.0, budget=500.0
+Cerco schedule per activity_id=8
+  MATCH trovato! schedule_id=10, ore=20.0, budget=50.0
+Cerco schedule per activity_id=7
+  MATCH trovato! schedule_id=11, ore=100.0, budget=100.0
+Cerco schedule per activity_id=11
+  MATCH trovato! schedule_id=8, ore=20.0, budget=500.0
+refresh_tree: project_id=3, schedules trovati: 6
+  Schedule: activity_id=7, ore=100.0, budget=100.0
+  Schedule: activity_id=8, ore=20.0, budget=50.0
+  Schedule: activity_id=10, ore=100.0, budget=500.0
+  Schedule: activity_id=9, ore=10.0, budget=100.0
+  Schedule: activity_id=11, ore=20.0, budget=500.0
+  Schedule: activity_id=None, ore=100.0, budget=0.0
+Attività caricate per project_id=3: 5
+  Activity: id=9, name=CORREZIONI
+  Activity: id=10, name=DISEGNI
+  Activity: id=8, name=PROGETTAZIONE
+  Activity: id=7, name=STUDIO LAYOUT
+  Activity: id=11, name=TEST2
+Cerco schedule per activity_id=9
+  MATCH trovato! schedule_id=9, ore=10.0, budget=100.0
+Cerco schedule per activity_id=10
+  MATCH trovato! schedule_id=7, ore=100.0, budget=500.0
+Cerco schedule per activity_id=8
+  MATCH trovato! schedule_id=10, ore=20.0, budget=50.0
+Cerco schedule per activity_id=7
+  MATCH trovato! schedule_id=11, ore=100.0, budget=100.0
+Cerco schedule per activity_id=11
+  MATCH trovato! schedule_id=8, ore=20.0, budget=500.0
