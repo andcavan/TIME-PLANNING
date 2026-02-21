@@ -25,6 +25,17 @@ pip install -r requirements.txt
 python main.py
 ```
 
+## Build EXE (Windows)
+
+```powershell
+.\build.ps1
+```
+
+Lo script:
+- pulisce `build/` e `dist/` (usa `.\build.ps1 -NoClean` per non pulire)
+- installa `pyinstaller` se mancante
+- genera l'eseguibile in `dist\APP-Timesheet-v<versione>\APP-Timesheet-v<versione>.exe`
+
 ## Credenziali iniziali
 
 - username: `admin`
