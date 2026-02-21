@@ -126,6 +126,13 @@ class Database:
                 note TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT (datetime('now'))
             );
+
+            CREATE TABLE IF NOT EXISTS user_project_assignments (
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                assigned_at TEXT NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (user_id, project_id)
+            );
             """
         )
         self.conn.commit()
@@ -355,6 +362,76 @@ class Database:
         )
         self.conn.commit()
 
+    # === USER PROJECT ASSIGNMENTS ===
+    
+    def assign_user_to_project(self, user_id: int, project_id: int) -> None:
+        """Assegna un utente a una commessa."""
+        self.conn.execute(
+            "INSERT OR IGNORE INTO user_project_assignments (user_id, project_id) VALUES (?, ?)",
+            (user_id, project_id),
+        )
+        self.conn.commit()
+    
+    def unassign_user_from_project(self, user_id: int, project_id: int) -> None:
+        """Rimuove l'assegnazione di un utente da una commessa."""
+        self.conn.execute(
+            "DELETE FROM user_project_assignments WHERE user_id = ? AND project_id = ?",
+            (user_id, project_id),
+        )
+        self.conn.commit()
+    
+    def list_users_assigned_to_project(self, project_id: int) -> list[dict[str, Any]]:
+        """Restituisce gli utenti assegnati a una commessa."""
+        return self._fetchall(
+            """
+            SELECT u.id, u.username, u.full_name, u.role
+            FROM users u
+            JOIN user_project_assignments upa ON upa.user_id = u.id
+            WHERE upa.project_id = ? AND u.active = 1
+            ORDER BY u.full_name
+            """,
+            (project_id,),
+        )
+    
+    def list_projects_assigned_to_user(self, user_id: int, only_open: bool = False) -> list[dict[str, Any]]:
+        """Restituisce le commesse a cui un utente è assegnato."""
+        where_clause = "AND s.status = 'aperta'" if only_open else ""
+        return self._fetchall(
+            f"""
+            SELECT DISTINCT p.id, p.name, p.client_id, c.name AS client_name, p.hourly_rate, p.notes
+            FROM projects p
+            JOIN clients c ON c.id = p.client_id
+            JOIN user_project_assignments upa ON upa.project_id = p.id
+            LEFT JOIN schedules s ON s.project_id = p.id AND s.activity_id IS NULL
+            WHERE upa.user_id = ? {where_clause}
+            ORDER BY c.name, p.name
+            """,
+            (user_id,),
+        )
+    
+    def is_user_assigned_to_project(self, user_id: int, project_id: int) -> bool:
+        """Verifica se un utente è assegnato a una commessa."""
+        row = self._fetchone(
+            "SELECT 1 FROM user_project_assignments WHERE user_id = ? AND project_id = ?",
+            (user_id, project_id),
+        )
+        return row is not None
+    
+    def user_can_access_activity(self, user_id: int, project_id: int, activity_id: int) -> bool:
+        """Verifica se un utente può accedere a un'attività (tramite assegnazione alla commessa)."""
+        # Verifica che l'attività appartenga alla commessa
+        activity = self._fetchone(
+            "SELECT id FROM activities WHERE id = ? AND project_id = ?",
+            (activity_id, project_id),
+        )
+        if not activity:
+            return False
+        
+        # Verifica assegnazione utente alla commessa
+        return self.is_user_assigned_to_project(user_id, project_id)
+
+    # === CLIENTS ===
+
     def add_client(self, name: str, hourly_rate: float, notes: str = "", referente: str = "", telefono: str = "", email: str = "") -> None:
         self.conn.execute(
             "INSERT INTO clients (name, hourly_rate, notes, referente, telefono, email) VALUES (?, ?, ?, ?, ?, ?)",
@@ -427,9 +504,10 @@ class Database:
             """
         )
 
-    def list_projects(self, client_id: int | None = None, only_with_open_schedules: bool = False) -> list[dict[str, Any]]:
+    def list_projects(self, client_id: int | None = None, only_with_open_schedules: bool = False, user_id: int | None = None) -> list[dict[str, Any]]:
         params: list[Any] = []
         where_clauses = []
+        joins = ""
         
         if client_id is not None:
             where_clauses.append("p.client_id = ?")
@@ -441,6 +519,12 @@ class Database:
             # Escludi progetti che hanno una schedule chiusa a livello progetto
             where_clauses.append("p.id NOT IN (SELECT DISTINCT project_id FROM schedules WHERE status = 'chiusa' AND activity_id IS NULL)")
         
+        if user_id is not None:
+            # Filtra solo progetti assegnati all'utente
+            joins = "JOIN user_project_assignments upa ON upa.project_id = p.id"
+            where_clauses.append("upa.user_id = ?")
+            params.append(user_id)
+        
         where = ""
         if where_clauses:
             where = "WHERE " + " AND ".join(where_clauses)
@@ -451,6 +535,7 @@ class Database:
                    c.name AS client_name, c.referente AS client_referente, c.telefono AS client_telefono, c.email AS client_email
             FROM projects p
             JOIN clients c ON c.id = p.client_id
+            {joins}
             {where}
             ORDER BY c.name, p.name
             """,

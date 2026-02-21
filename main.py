@@ -608,16 +608,31 @@ class TimesheetApp(ctk.CTk):
 
     def on_timesheet_client_change(self, _value: str) -> None:
         client_id = self._id_from_option(self.ts_client_combo.get())
-        projects = self.db.list_projects(client_id, only_with_open_schedules=True)
-        values = [self._project_option(row) for row in projects]
-        self._set_combo_values(self.ts_project_combo, values)
-        self.on_timesheet_project_change(self.ts_project_combo.get())
+        
+        # Carica solo commesse del cliente selezionato (filtrando per utente se non admin)
+        if client_id:
+            user_id = None if self.is_admin else int(self.current_user["id"])
+            projects = self.db.list_projects(client_id, only_with_open_schedules=True, user_id=user_id)
+            values = [""] + [self._project_option(row) for row in projects]  # "" come prima opzione
+            self._set_combo_values(self.ts_project_combo, values)
+            self.ts_project_combo.set("")  # Forza selezione vuota
+        else:
+            self._set_combo_values(self.ts_project_combo, [""])
+        
+        # Pulisci attività
+        self._set_combo_values(self.ts_activity_combo, [""])
 
     def on_timesheet_project_change(self, _value: str) -> None:
         project_id = self._id_from_option(self.ts_project_combo.get())
-        activities = self.db.list_activities(project_id, only_with_open_schedules=True)
-        values = [self._activity_option(row) for row in activities]
-        self._set_combo_values(self.ts_activity_combo, values)
+        
+        # Carica solo attività della commessa selezionata
+        if project_id:
+            activities = self.db.list_activities(project_id, only_with_open_schedules=True)
+            values = [""] + [self._activity_option(row) for row in activities]  # "" come prima opzione
+            self._set_combo_values(self.ts_activity_combo, values)
+            self.ts_activity_combo.set("")  # Forza selezione vuota
+        else:
+            self._set_combo_values(self.ts_activity_combo, [""])
 
     def save_timesheet_entry(self) -> None:
         try:
@@ -627,6 +642,11 @@ class TimesheetApp(ctk.CTk):
             activity_id = self._id_from_option(self.ts_activity_combo.get())
             if not (client_id and project_id and activity_id):
                 raise ValueError("Seleziona cliente, commessa e attivita.")
+            
+            # Verifica permessi: utente non-admin deve essere assegnato alla commessa
+            if not self.is_admin:
+                if not self.db.user_can_access_activity(user_id, project_id, activity_id):
+                    raise ValueError("Non hai i permessi per inserire ore su questa attività.")
 
             hours = self._to_float(self.ts_hours_entry.get().strip(), "Ore")
             if hours <= 0:
@@ -828,6 +848,16 @@ class TimesheetApp(ctk.CTk):
         ctk.CTkLabel(right_data, text="Budget (€):", font=ctk.CTkFont(size=12)).pack(anchor="w", padx=10, pady=(1, 0))
         self.pm_project_budget_label = ctk.CTkLabel(right_data, text="--", font=ctk.CTkFont(size=12))
         self.pm_project_budget_label.pack(anchor="w", padx=10, pady=(0, 2))
+        
+        # Utenti assegnati (solo admin)
+        if self.is_admin:
+            ctk.CTkLabel(right_data, text="Utenti assegnati:", font=ctk.CTkFont(size=12, weight="bold")).pack(
+                anchor="w", padx=10, pady=(8, 2)
+            )
+            self.pm_users_frame = ctk.CTkFrame(right_data, fg_color="transparent")
+            self.pm_users_frame.pack(fill="x", padx=10, pady=(0, 4))
+            # I checkbox verranno popolati dinamicamente in on_pm_project_change
+            self.pm_user_checkboxes = {}  # {user_id: CTkCheckBox}
 
         # ========== PANNELLO 2: GESTIONE ATTIVITÀ ==========
         middle_panel = tk.Frame(paned_vertical)
@@ -1022,8 +1052,59 @@ class TimesheetApp(ctk.CTk):
             self.pm_project_budget_label.configure(text="--")
             self.clear_budget_alert()
         
+        # Aggiorna checkbox utenti assegnati (solo admin)
+        if self.is_admin:
+            self.refresh_user_checkboxes()
+        
         # Aggiorna lista attività della commessa selezionata
         self.refresh_project_activities_tree()
+    
+    def refresh_user_checkboxes(self) -> None:
+        """Aggiorna i checkbox degli utenti assegnati alla commessa."""
+        if not hasattr(self, 'pm_users_frame'):
+            return
+        
+        # Pulisci checkbox esistenti
+        for widget in self.pm_users_frame.winfo_children():
+            widget.destroy()
+        self.pm_user_checkboxes.clear()
+        
+        if not self.selected_project_id:
+            return
+        
+        # Carica tutti gli utenti attivi
+        all_users = self.db.list_users()
+        active_users = [u for u in all_users if u["active"] == 1]
+        
+        # Carica utenti già assegnati
+        assigned_users = self.db.list_users_assigned_to_project(self.selected_project_id)
+        assigned_ids = {u["id"] for u in assigned_users}
+        
+        # Crea checkbox per ogni utente
+        for user in active_users:
+            var = tk.BooleanVar(value=user["id"] in assigned_ids)
+            cb = ctk.CTkCheckBox(
+                self.pm_users_frame,
+                text=f"{user['full_name']} ({user['username']})",
+                variable=var,
+                command=lambda uid=user["id"], v=var: self.on_user_assignment_toggle(uid, v)
+            )
+            cb.pack(anchor="w", pady=1)
+            self.pm_user_checkboxes[user["id"]] = (cb, var)
+    
+    def on_user_assignment_toggle(self, user_id: int, var: tk.BooleanVar) -> None:
+        """Gestisce il cambio stato di assegnazione utente."""
+        if not self.selected_project_id:
+            return
+        
+        try:
+            if var.get():
+                self.db.assign_user_to_project(user_id, self.selected_project_id)
+            else:
+                self.db.unassign_user_from_project(user_id, self.selected_project_id)
+        except Exception as e:
+            messagebox.showerror("Gestione Commesse", f"Errore assegnazione: {e}")
+            var.set(not var.get())  # Ripristina stato precedente
     
     def refresh_project_activities_tree(self) -> None:
         """Aggiorna il treeview mostrando solo le attività della commessa selezionata."""
@@ -1041,19 +1122,8 @@ class TimesheetApp(ctk.CTk):
         # Carica tutti gli schedule una volta sola
         all_schedules = self.db.list_schedules()
         
-        with open("debug.log", "a", encoding="utf-8") as f:
-            project_schedules = [s for s in all_schedules if s['project_id'] == self.selected_project_id]
-            f.write(f"refresh_tree: project_id={self.selected_project_id}, schedules trovati: {len(project_schedules)}\n")
-            for s in project_schedules:
-                f.write(f"  Schedule: activity_id={s.get('activity_id')}, ore={s.get('planned_hours')}, budget={s.get('budget')}\n")
-        
         # Mostra solo le attività della commessa selezionata
         activities = self.db.list_activities(self.selected_project_id)
-        
-        with open("debug.log", "a", encoding="utf-8") as f:
-            f.write(f"Attività caricate per project_id={self.selected_project_id}: {len(activities)}\n")
-            for a in activities:
-                f.write(f"  Activity: id={a['id']}, name={a['name']}\n")
         
         for activity in activities:
             # Cerca pianificazione per l'attività
@@ -1061,14 +1131,8 @@ class TimesheetApp(ctk.CTk):
             planned_hours = 0.0
             budget = 0.0
             
-            with open("debug.log", "a", encoding="utf-8") as f:
-                f.write(f"Cerco schedule per activity_id={activity['id']}\n")
-            
             for sched in all_schedules:
                 if sched["project_id"] == self.selected_project_id and sched["activity_id"] == activity["id"]:
-                    with open("debug.log", "a", encoding="utf-8") as f:
-                        f.write(f"  MATCH trovato! schedule_id={sched['id']}, ore={sched['planned_hours']}, budget={sched.get('budget')}\n")
-                    
                     start = datetime.strptime(sched["start_date"], "%Y-%m-%d").strftime("%d/%m/%y")
                     end = datetime.strptime(sched["end_date"], "%Y-%m-%d").strftime("%d/%m/%y")
                     dates_text = f"{start} - {end}"
@@ -1182,9 +1246,6 @@ class TimesheetApp(ctk.CTk):
             hours_str = self.pm_activity_hours_entry.get().strip()
             budget_str = self.pm_activity_budget_entry.get().strip()
             
-            with open("debug.log", "a", encoding="utf-8") as f:
-                f.write(f"Planning data letti: start='{start_date_str}', end='{end_date_str}', hours='{hours_str}', budget='{budget_str}'\n")
-            
             # Crea schedule solo se ci sono TUTTI i dati necessari (date + ore)
             if start_date_str and end_date_str and hours_str:
                 start_date = datetime.strptime(start_date_str, "%d/%m/%Y").strftime("%Y-%m-%d")
@@ -1199,13 +1260,7 @@ class TimesheetApp(ctk.CTk):
                 
                 budget = self._to_float(budget_str, "Budget") if budget_str else 0.0
                 
-                with open("debug.log", "a", encoding="utf-8") as f:
-                    f.write(f"Chiamata add_schedule: project_id={self.selected_project_id}, activity_id={activity_id}, start={start_date}, end={end_date}, hours={planned_hours}, budget={budget}\n")
-                
                 self.db.add_schedule(self.selected_project_id, activity_id, start_date, end_date, planned_hours, "", budget)
-                
-                with open("debug.log", "a", encoding="utf-8") as f:
-                    f.write(f"Schedule salvato con successo\n")
             
             messagebox.showinfo("Gestione Commesse", "Attività aggiunta con successo.")
             
