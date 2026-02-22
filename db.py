@@ -207,7 +207,7 @@ class Database:
                 activity_id INTEGER REFERENCES activities(id),
                 start_date TEXT NOT NULL,
                 end_date TEXT NOT NULL,
-                planned_hours REAL NOT NULL CHECK(planned_hours > 0),
+                planned_hours REAL NOT NULL DEFAULT 0 CHECK(planned_hours >= 0),
                 note TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT (datetime('now'))
             );
@@ -259,7 +259,7 @@ class Database:
                     activity_id INTEGER REFERENCES activities(id),
                     start_date TEXT NOT NULL,
                     end_date TEXT NOT NULL,
-                    planned_hours REAL NOT NULL CHECK(planned_hours > 0),
+                    planned_hours REAL NOT NULL DEFAULT 0 CHECK(planned_hours >= 0),
                     note TEXT NOT NULL DEFAULT '',
                     created_at TEXT NOT NULL DEFAULT (datetime('now'))
                 )
@@ -302,6 +302,9 @@ class Database:
         if "descrizione_commessa" not in columns:
             self.conn.execute("ALTER TABLE projects ADD COLUMN descrizione_commessa TEXT NOT NULL DEFAULT ''")
             self.conn.commit()
+        if "closed" not in columns:
+            self.conn.execute("ALTER TABLE projects ADD COLUMN closed INTEGER NOT NULL DEFAULT 0 CHECK(closed IN (0, 1))")
+            self.conn.commit()
         
         # Aggiungi colonne permessi tab a users
         cursor = self.conn.execute("PRAGMA table_info(users)")
@@ -317,6 +320,36 @@ class Database:
             self.conn.commit()
         if "tab_control" not in columns:
             self.conn.execute("ALTER TABLE users ADD COLUMN tab_control INTEGER NOT NULL DEFAULT 1 CHECK(tab_control IN (0, 1))")
+            self.conn.commit()
+        
+        # Aggiungi activity_id a user_project_assignments per assegnazioni specifiche alle attività
+        cursor = self.conn.execute("PRAGMA table_info(user_project_assignments)")
+        columns = [row[1] for row in cursor.fetchall()]
+        if "activity_id" not in columns:
+            self.conn.execute("ALTER TABLE user_project_assignments ADD COLUMN activity_id INTEGER REFERENCES activities(id) ON DELETE CASCADE")
+            self.conn.commit()
+        
+        # Migrazione: ricrea user_project_assignments con id autoincrement e UNIQUE su (user_id, project_id, activity_id)
+        # per permettere lo stesso utente su più attività della stessa commessa
+        cursor = self.conn.execute("PRAGMA table_info(user_project_assignments)")
+        columns = [row[1] for row in cursor.fetchall()]
+        if "id" not in columns:
+            self.conn.execute("""
+                CREATE TABLE user_project_assignments_new (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                    activity_id INTEGER REFERENCES activities(id) ON DELETE CASCADE,
+                    assigned_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    UNIQUE(user_id, project_id, activity_id)
+                )
+            """)
+            self.conn.execute("""
+                INSERT OR IGNORE INTO user_project_assignments_new (user_id, project_id, activity_id, assigned_at)
+                SELECT user_id, project_id, activity_id, assigned_at FROM user_project_assignments
+            """)
+            self.conn.execute("DROP TABLE user_project_assignments")
+            self.conn.execute("ALTER TABLE user_project_assignments_new RENAME TO user_project_assignments")
             self.conn.commit()
 
     def _seed_admin(self) -> None:
@@ -502,6 +535,48 @@ class Database:
         )
         return row is not None
     
+    def add_user_project_assignment(self, user_id: int, project_id: int, activity_id: int | None = None) -> None:
+        """Aggiunge un'assegnazione utente-progetto-attività."""
+        try:
+            self.conn.execute(
+                "INSERT OR IGNORE INTO user_project_assignments (user_id, project_id, activity_id) VALUES (?, ?, ?)",
+                (user_id, project_id, activity_id),
+            )
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+    
+    def update_user_project_assignment(self, assignment_id: int, user_id: int, project_id: int, activity_id: int | None = None) -> None:
+        """Aggiorna un'assegnazione esistente. Non utilizzata con la struttura attuale che usa PRIMARY KEY composita."""
+        pass
+    
+    def remove_user_project_assignment(self, user_id: int | None, project_id: int, activity_id: int | None = None) -> None:
+        """Rimuove un'assegnazione utente-progetto-attività."""
+        if activity_id:
+            self.conn.execute(
+                "DELETE FROM user_project_assignments WHERE project_id = ? AND activity_id = ?",
+                (project_id, activity_id),
+            )
+        else:
+            self.conn.execute(
+                "DELETE FROM user_project_assignments WHERE project_id = ? AND activity_id IS NULL",
+                (project_id,),
+            )
+        self.conn.commit()
+    
+    def get_user_project_assignments(self, project_id: int) -> list[dict[str, Any]]:
+        """Restituisce le assegnazioni per un progetto."""
+        return self._fetchall(
+            """
+            SELECT upa.user_id, upa.project_id, upa.activity_id, u.username, u.full_name
+            FROM user_project_assignments upa
+            JOIN users u ON u.id = upa.user_id
+            WHERE upa.project_id = ?
+            ORDER BY u.full_name, upa.activity_id
+            """,
+            (project_id,),
+        )
+    
     def user_can_access_activity(self, user_id: int, project_id: int, activity_id: int) -> bool:
         """Verifica se un utente può accedere a un'attività (tramite assegnazione alla commessa)."""
         # Verifica che l'attività appartenga alla commessa
@@ -571,6 +646,60 @@ class Database:
         # Elimina il progetto
         self.conn.execute("DELETE FROM projects WHERE id = ?", (project_id,))
         self.conn.commit()
+    
+    def close_project(self, project_id: int) -> None:
+        """Chiude un progetto. Se ha una schedule, aggiorna lo status; altrimenti usa il campo closed."""
+        # Verifica se esiste una schedule per il progetto
+        cursor = self.conn.execute(
+            "SELECT id FROM schedules WHERE project_id = ? AND activity_id IS NULL",
+            (project_id,)
+        )
+        schedule_exists = cursor.fetchone() is not None
+        
+        if schedule_exists:
+            # Ha una schedule: aggiorna lo status
+            self.conn.execute(
+                "UPDATE schedules SET status = 'chiusa' WHERE project_id = ? AND activity_id IS NULL",
+                (project_id,)
+            )
+        
+        # Aggiorna sempre anche il campo closed per consistenza
+        self.conn.execute("UPDATE projects SET closed = 1 WHERE id = ?", (project_id,))
+        self.conn.commit()
+    
+    def open_project(self, project_id: int) -> None:
+        """Apre un progetto. Se ha una schedule, aggiorna lo status; altrimenti usa il campo closed."""
+        # Verifica se esiste una schedule per il progetto
+        cursor = self.conn.execute(
+            "SELECT id FROM schedules WHERE project_id = ? AND activity_id IS NULL",
+            (project_id,)
+        )
+        schedule_exists = cursor.fetchone() is not None
+        
+        if schedule_exists:
+            # Ha una schedule: aggiorna lo status
+            self.conn.execute(
+                "UPDATE schedules SET status = 'aperta' WHERE project_id = ? AND activity_id IS NULL",
+                (project_id,)
+            )
+        
+        # Aggiorna sempre anche il campo closed per consistenza
+        self.conn.execute("UPDATE projects SET closed = 0 WHERE id = ?", (project_id,))
+        self.conn.commit()
+    
+    def get_project(self, project_id: int) -> dict[str, Any] | None:
+        """Recupera un singolo progetto per ID."""
+        rows = self._fetchall(
+            """
+            SELECT p.id, p.client_id, p.name, p.hourly_rate, p.notes, p.referente_commessa, p.descrizione_commessa, p.closed,
+                   c.name AS client_name, c.referente AS client_referente, c.telefono AS client_telefono, c.email AS client_email
+            FROM projects p
+            JOIN clients c ON c.id = p.client_id
+            WHERE p.id = ?
+            """,
+            (project_id,)
+        )
+        return rows[0] if rows else None
 
     def add_activity(self, project_id: int, name: str, hourly_rate: float, notes: str = "") -> int:
         cursor = self.conn.execute(
@@ -589,7 +718,7 @@ class Database:
             """
         )
 
-    def list_projects(self, client_id: int | None = None, only_with_open_schedules: bool = False, user_id: int | None = None) -> list[dict[str, Any]]:
+    def list_projects(self, client_id: int | None = None, only_with_open_schedules: bool = False, user_id: int | None = None, available_from_date: str | None = None) -> list[dict[str, Any]]:
         params: list[Any] = []
         where_clauses = []
         joins = ""
@@ -604,6 +733,11 @@ class Database:
             # Escludi progetti che hanno una schedule chiusa a livello progetto
             where_clauses.append("p.id NOT IN (SELECT DISTINCT project_id FROM schedules WHERE status = 'chiusa' AND activity_id IS NULL)")
         
+        if available_from_date is not None:
+            # Mostra solo progetti la cui pianificazione è già iniziata
+            where_clauses.append("p.id IN (SELECT DISTINCT project_id FROM schedules WHERE activity_id IS NULL AND start_date <= ?)")
+            params.append(available_from_date)
+        
         if user_id is not None:
             # Filtra solo progetti assegnati all'utente
             joins = "JOIN user_project_assignments upa ON upa.project_id = p.id"
@@ -616,7 +750,7 @@ class Database:
 
         return self._fetchall(
             f"""
-            SELECT p.id, p.client_id, p.name, p.hourly_rate, p.notes, p.referente_commessa, p.descrizione_commessa, 
+            SELECT p.id, p.client_id, p.name, p.hourly_rate, p.notes, p.referente_commessa, p.descrizione_commessa, p.closed,
                    c.name AS client_name, c.referente AS client_referente, c.telefono AS client_telefono, c.email AS client_email
             FROM projects p
             JOIN clients c ON c.id = p.client_id
@@ -627,7 +761,7 @@ class Database:
             tuple(params),
         )
 
-    def list_activities(self, project_id: int | None = None, only_with_open_schedules: bool = False) -> list[dict[str, Any]]:
+    def list_activities(self, project_id: int | None = None, only_with_open_schedules: bool = False, available_from_date: str | None = None) -> list[dict[str, Any]]:
         params: list[Any] = []
         where_clauses = []
         
@@ -640,6 +774,11 @@ class Database:
             where_clauses.append("a.id IN (SELECT DISTINCT activity_id FROM schedules WHERE status = 'aperta' AND activity_id IS NOT NULL)")
             # Escludi attività di progetti che hanno una schedule chiusa a livello progetto
             where_clauses.append("a.project_id NOT IN (SELECT DISTINCT project_id FROM schedules WHERE status = 'chiusa' AND activity_id IS NULL)")
+        
+        if available_from_date is not None:
+            # Mostra solo attività la cui pianificazione è già iniziata
+            where_clauses.append("a.id IN (SELECT DISTINCT activity_id FROM schedules WHERE activity_id IS NOT NULL AND start_date <= ?)")
+            params.append(available_from_date)
         
         where = ""
         if where_clauses:
@@ -662,6 +801,13 @@ class Database:
             (name.strip(), hourly_rate, notes.strip(), activity_id),
         )
         self.conn.commit()
+    
+    def get_activity(self, activity_id: int) -> dict[str, Any] | None:
+        """Restituisce i dati di un'attività specifica."""
+        return self._fetchone(
+            "SELECT id, project_id, name, hourly_rate, notes FROM activities WHERE id = ?",
+            (activity_id,),
+        )
 
     def delete_activity(self, activity_id: int) -> None:
         """Elimina un'attività e tutti i suoi dati associati (timesheet, schedules)."""
@@ -890,7 +1036,7 @@ class Database:
             JOIN clients c ON c.id = p.client_id
             LEFT JOIN activities a ON a.id = s.activity_id
             {where_clause}
-            ORDER BY s.start_date DESC, c.name, p.name
+            ORDER BY s.start_date ASC, c.name, p.name
         """
         return self._fetchall(query)
 

@@ -29,6 +29,16 @@ class TimesheetApp(ctk.CTk):
         self.current_user: dict | None = None
         self.selected_date = date.today()
         self.is_dark_mode = True
+        
+        # Inizializza cache per filtri di ricerca
+        self._projects_data = []
+        self._activities_data = []
+        
+        # Tracking per ordinamento colonne
+        self._projects_sort_col = None
+        self._projects_sort_reverse = False
+        self._activities_sort_col = None
+        self._activities_sort_reverse = False
 
         self.title(f"APP Timesheet v{APP_VERSION}")
         self.geometry("1360x860")
@@ -425,23 +435,23 @@ class TimesheetApp(ctk.CTk):
 
         ctk.CTkLabel(form, text="Cliente").grid(row=1, column=0, padx=10, pady=4, sticky="w")
         self.ts_client_combo = ctk.CTkComboBox(
-            form, state="readonly", command=self.on_timesheet_client_change, width=260, values=[""]
+            form, state="readonly", command=self.on_timesheet_client_change, width=300, values=[""]
         )
-        self.ts_client_combo.grid(row=1, column=1, padx=10, pady=4, sticky="ew")
+        self.ts_client_combo.grid(row=1, column=1, padx=10, pady=4, sticky="w")
 
         ctk.CTkLabel(form, text="Commessa").grid(row=2, column=0, padx=10, pady=4, sticky="w")
         self.ts_project_combo = ctk.CTkComboBox(
-            form, state="readonly", command=self.on_timesheet_project_change, width=260, values=[""]
+            form, state="readonly", command=self.on_timesheet_project_change, width=300, values=[""]
         )
-        self.ts_project_combo.grid(row=2, column=1, padx=10, pady=4, sticky="ew")
+        self.ts_project_combo.grid(row=2, column=1, padx=10, pady=4, sticky="w")
 
         ctk.CTkLabel(form, text="Attivita").grid(row=3, column=0, padx=10, pady=4, sticky="w")
-        self.ts_activity_combo = ctk.CTkComboBox(form, state="readonly", width=260, values=[""])
-        self.ts_activity_combo.grid(row=3, column=1, padx=10, pady=4, sticky="ew")
+        self.ts_activity_combo = ctk.CTkComboBox(form, state="readonly", width=300, values=[""])
+        self.ts_activity_combo.grid(row=3, column=1, padx=10, pady=4, sticky="w")
 
         ctk.CTkLabel(form, text="Ore").grid(row=4, column=0, padx=10, pady=4, sticky="w")
-        self.ts_hours_entry = ctk.CTkEntry(form)
-        self.ts_hours_entry.grid(row=4, column=1, padx=10, pady=4, sticky="ew")
+        self.ts_hours_entry = ctk.CTkEntry(form, width=150)
+        self.ts_hours_entry.grid(row=4, column=1, padx=10, pady=4, sticky="w")
 
         ctk.CTkLabel(form, text="Note").grid(row=5, column=0, padx=10, pady=4, sticky="nw")
         self.ts_note_text = ctk.CTkTextbox(form, height=64)
@@ -632,10 +642,11 @@ class TimesheetApp(ctk.CTk):
     def on_timesheet_client_change(self, _value: str) -> None:
         client_id = self._id_from_option(self.ts_client_combo.get())
         
-        # Carica solo commesse del cliente selezionato (filtrando per utente se non admin)
+        # Carica solo commesse del cliente selezionato che sono già iniziate (filtrando per utente se non admin)
         if client_id:
             user_id = None if self.is_admin else int(self.current_user["id"])
-            projects = self.db.list_projects(client_id, only_with_open_schedules=True, user_id=user_id)
+            today = date.today().isoformat()
+            projects = self.db.list_projects(client_id, only_with_open_schedules=True, user_id=user_id, available_from_date=today)
             values = [""] + [self._project_option(row) for row in projects]  # "" come prima opzione
             self._set_combo_values(self.ts_project_combo, values)
             self.ts_project_combo.set("")  # Forza selezione vuota
@@ -648,9 +659,10 @@ class TimesheetApp(ctk.CTk):
     def on_timesheet_project_change(self, _value: str) -> None:
         project_id = self._id_from_option(self.ts_project_combo.get())
         
-        # Carica solo attività della commessa selezionata
+        # Carica solo attività della commessa selezionata che sono già iniziate
         if project_id:
-            activities = self.db.list_activities(project_id, only_with_open_schedules=True)
+            today = date.today().isoformat()
+            activities = self.db.list_activities(project_id, only_with_open_schedules=True, available_from_date=today)
             values = [""] + [self._activity_option(row) for row in activities]  # "" come prima opzione
             self._set_combo_values(self.ts_activity_combo, values)
             self.ts_activity_combo.set("")  # Forza selezione vuota
@@ -756,750 +768,1218 @@ class TimesheetApp(ctk.CTk):
         self.refresh_control_panel()
 
     def build_project_management_tab(self) -> None:
-        """Tab unificata per gestione commesse con pianificazione integrata."""
-        # Contenitore principale
+        """Tab semplificata con elenchi commesse e attività affiancati."""
         main_container = ctk.CTkFrame(self.tab_master)
         main_container.pack(fill="both", expand=True, padx=8, pady=8)
         
-        # ========== SEZIONE 1: SELEZIONE CLIENTE E COMMESSA (fissa in alto) ==========
+        # ========== SEZIONE 1: SELEZIONE CLIENTE (fissa in alto) ==========
         selection_frame = ctk.CTkFrame(main_container)
         selection_frame.pack(fill="x", pady=(0, 8))
-        selection_frame.grid_columnconfigure(1, weight=1)
-        selection_frame.grid_columnconfigure(3, weight=1)
         
         ctk.CTkLabel(selection_frame, text="Cliente:", font=ctk.CTkFont(weight="bold")).grid(
             row=0, column=0, padx=(10, 5), pady=10, sticky="w"
         )
         self.pm_client_combo = ctk.CTkComboBox(
-            selection_frame, state="readonly", command=self.on_pm_client_change, values=[""], width=300
+            selection_frame, state="readonly", command=self.on_pm_client_change, values=[""], width=250
         )
-        self.pm_client_combo.grid(row=0, column=1, padx=5, pady=10, sticky="ew")
+        self.pm_client_combo.grid(row=0, column=1, padx=5, pady=10, sticky="w")
         
         ctk.CTkButton(
             selection_frame, text="🔧 Gestione Clienti", width=150, 
             command=self.open_clients_management
-        ).grid(row=0, column=2, padx=5, pady=10)
+        ).grid(row=0, column=2, padx=(5, 10), pady=10, sticky="w")
         
-        ctk.CTkLabel(selection_frame, text="Commessa:", font=ctk.CTkFont(weight="bold")).grid(
-            row=0, column=3, padx=(20, 5), pady=10, sticky="w"
-        )
-        self.pm_project_combo = ctk.CTkComboBox(
-            selection_frame, state="readonly", command=self.on_pm_project_change, values=[""], width=300
-        )
-        self.pm_project_combo.grid(row=0, column=4, padx=5, pady=10, sticky="ew")
+        # ========== SEZIONE 2: ELENCHI AFFIANCATI (Commesse | Attività) ==========
+        # Usa PanedWindow per ridimensionamento dinamico
+        lists_paned = ttk.PanedWindow(main_container, orient=tk.HORIZONTAL)
+        lists_paned.pack(fill="both", expand=True, pady=(0, 8))
+        
+        # Frame per elenco commesse con PanedWindow verticale
+        projects_container = ctk.CTkFrame(lists_paned)
+        projects_paned_v = ttk.PanedWindow(projects_container, orient=tk.VERTICAL)
+        projects_paned_v.pack(fill="both", expand=True)
+        
+        # Frame superiore: treeview commesse
+        projects_frame = ctk.CTkFrame(projects_paned_v)
+        projects_frame.grid_rowconfigure(3, weight=1)
+        projects_frame.grid_columnconfigure(0, weight=1)
+        
+        # Header e pulsanti commesse
+        header_projects = ctk.CTkFrame(projects_frame, fg_color="transparent")
+        header_projects.grid(row=0, column=0, columnspan=2, padx=8, pady=(8, 4), sticky="ew")
+        
+        ctk.CTkLabel(
+            header_projects, text="Commesse del Cliente", 
+            font=ctk.CTkFont(size=13, weight="bold")
+        ).pack(side="left")
+        
+        # Pulsanti gestione commesse
+        buttons_projects = ctk.CTkFrame(projects_frame, fg_color="transparent")
+        buttons_projects.grid(row=1, column=0, columnspan=2, padx=8, pady=(0, 4), sticky="w")
         
         ctk.CTkButton(
-            selection_frame, text="🔧 Gestione Commessa", width=150,
-            command=self.open_project_management
-        ).grid(row=0, column=5, padx=5, pady=10)
-
-        # PanedWindow principale verticale per aree ridimensionabili
-        paned_vertical = ttk.PanedWindow(main_container, orient="vertical")
-        paned_vertical.pack(fill="both", expand=True)
-
-        # ========== PANNELLO 1: DATI COMMESSA + PIANIFICAZIONE ==========
-        top_panel = tk.Frame(paned_vertical)
-        paned_vertical.add(top_panel, weight=0)
+            buttons_projects, text="➕ Nuova", width=100,
+            command=self.pm_new_project
+        ).pack(side="left", padx=(0, 5))
         
-        # Contenitore con grid per affiancamento fisso (non ridimensionabile)
-        data_container = ctk.CTkFrame(top_panel)
-        data_container.pack(fill="both", expand=True, padx=4, pady=4)
-        data_container.grid_columnconfigure(0, weight=1)
-        data_container.grid_columnconfigure(1, weight=1)
-        data_container.grid_rowconfigure(0, weight=1)
+        ctk.CTkButton(
+            buttons_projects, text="✏️ Modifica", width=100,
+            command=self.pm_edit_project
+        ).pack(side="left", padx=(0, 10))
         
-        # Frame sinistra: dati commessa (scrollable)
-        left_data = ctk.CTkScrollableFrame(data_container, height=180)
-        left_data.grid(row=0, column=0, padx=(0, 2), pady=0, sticky="nsew")
-        
-        ctk.CTkLabel(left_data, text="Dati Commessa Selezionata", font=ctk.CTkFont(size=14, weight="bold")).pack(
-            anchor="w", padx=10, pady=(2, 1)
+        # Switch per mostrare commesse chiuse
+        ctk.CTkLabel(buttons_projects, text="Mostra chiuse:").pack(side="left", padx=(10, 5))
+        self.show_closed_projects = tk.BooleanVar(value=False)
+        self.closed_switch = ctk.CTkSwitch(
+            buttons_projects, text="", variable=self.show_closed_projects,
+            command=self.refresh_projects_tree, width=50
         )
+        self.closed_switch.pack(side="left")
         
-        # Nome commessa (readonly) - font aumentato
-        ctk.CTkLabel(left_data, text="Nome:", font=ctk.CTkFont(size=12)).pack(anchor="w", padx=10, pady=(2, 0))
-        self.pm_project_name_label = ctk.CTkLabel(
-            left_data, text="Nessuna commessa selezionata", font=ctk.CTkFont(size=13, weight="bold")
-        )
-        self.pm_project_name_label.pack(anchor="w", padx=10, pady=(0, 1))
+        # Campo di ricerca per commesse
+        search_projects_frame = ctk.CTkFrame(projects_frame, fg_color="transparent")
+        search_projects_frame.grid(row=2, column=0, columnspan=2, padx=8, pady=(4, 4), sticky="ew")
+        search_projects_frame.grid_columnconfigure(1, weight=1)
         
-        ctk.CTkLabel(left_data, text="Cliente:", font=ctk.CTkFont(size=12)).pack(anchor="w", padx=10, pady=(1, 0))
-        self.pm_project_client_label = ctk.CTkLabel(left_data, text="--", font=ctk.CTkFont(size=12))
-        self.pm_project_client_label.pack(anchor="w", padx=10, pady=(0, 1))
+        ctk.CTkLabel(search_projects_frame, text="🔍 Filtra:").grid(row=0, column=0, padx=(0, 5))
+        self.project_search_var = tk.StringVar()
+        self.project_search_var.trace("w", lambda *args: self.filter_projects_tree())
+        self.project_search_entry = ctk.CTkEntry(search_projects_frame, textvariable=self.project_search_var, placeholder_text="Cerca commessa...")
+        self.project_search_entry.grid(row=0, column=1, sticky="ew")
         
-        ctk.CTkLabel(left_data, text="Referente cliente:", font=ctk.CTkFont(size=12)).pack(anchor="w", padx=10, pady=(1, 0))
-        self.pm_client_referente_label = ctk.CTkLabel(left_data, text="--", font=ctk.CTkFont(size=12))
-        self.pm_client_referente_label.pack(anchor="w", padx=10, pady=(0, 1))
+        # Treeview commesse con colonne visibili (aggiunta colonna stato)
+        projects_columns = ("stato", "referente", "dates", "hours", "budget")
+        self.projects_tree = ttk.Treeview(projects_frame, columns=projects_columns, show="tree headings")
+        self.projects_tree.heading("#0", text="Nome Commessa")
+        self.projects_tree.heading("stato", text="Stato")
+        self.projects_tree.heading("referente", text="Referente")
+        self.projects_tree.heading("dates", text="Date (inizio - fine)")
+        self.projects_tree.heading("hours", text="Ore pianif.")
+        self.projects_tree.heading("budget", text="Budget €")
         
-        ctk.CTkLabel(left_data, text="Telefono:", font=ctk.CTkFont(size=12)).pack(anchor="w", padx=10, pady=(1, 0))
-        self.pm_client_telefono_label = ctk.CTkLabel(left_data, text="--", font=ctk.CTkFont(size=12))
-        self.pm_client_telefono_label.pack(anchor="w", padx=10, pady=(0, 1))
+        self.projects_tree.column("#0", width=180, anchor="w")
+        self.projects_tree.column("stato", width=70, anchor="center")
+        self.projects_tree.column("referente", width=110, anchor="w")
+        self.projects_tree.column("dates", width=120, anchor="center")
+        self.projects_tree.column("hours", width=75, anchor="e")
+        self.projects_tree.column("budget", width=85, anchor="e")
         
-        ctk.CTkLabel(left_data, text="Email:", font=ctk.CTkFont(size=12)).pack(anchor="w", padx=10, pady=(1, 0))
-        self.pm_client_email_label = ctk.CTkLabel(left_data, text="--", font=ctk.CTkFont(size=12))
-        self.pm_client_email_label.pack(anchor="w", padx=10, pady=(0, 1))
+        self.projects_tree.grid(row=3, column=0, sticky="nsew", padx=(8, 0), pady=(0, 8))
+        self.projects_tree.bind("<<TreeviewSelect>>", self.on_pm_projects_tree_select)
+        self.projects_tree.bind("<Double-Button-1>", self.on_projects_tree_double_click)
         
-        if self.is_admin:
-            ctk.CTkLabel(left_data, text="Costo orario (€/h):", font=ctk.CTkFont(size=12)).pack(anchor="w", padx=10, pady=(1, 0))
-            self.pm_project_rate_label = ctk.CTkLabel(left_data, text="--", font=ctk.CTkFont(size=12))
-            self.pm_project_rate_label.pack(anchor="w", padx=10, pady=(0, 1))
+        # Abilita ordinamento per le colonne delle commesse
+        for col in ["#0"] + list(projects_columns):
+            self.projects_tree.heading(col, command=lambda c=col: self.sort_projects_tree(c))
         
-        ctk.CTkLabel(left_data, text="Note:", font=ctk.CTkFont(size=12)).pack(anchor="w", padx=10, pady=(1, 0))
-        self.pm_project_notes_label = ctk.CTkLabel(left_data, text="--", font=ctk.CTkFont(size=12))
-        self.pm_project_notes_label.pack(anchor="w", padx=10, pady=(0, 2))
+        scroll_projects_y = ttk.Scrollbar(projects_frame, orient="vertical", command=self.projects_tree.yview)
+        self.projects_tree.configure(yscrollcommand=scroll_projects_y.set)
+        scroll_projects_y.grid(row=3, column=1, sticky="ns", pady=(0, 8))
         
-        # Frame destra: pianificazione commessa (scrollable)
-        right_data = ctk.CTkScrollableFrame(data_container, height=180)
-        right_data.grid(row=0, column=1, padx=(2, 0), pady=0, sticky="nsew")
+        # Aggiungi frame treeview al paned window verticale
+        projects_paned_v.add(projects_frame, weight=3)
         
-        ctk.CTkLabel(right_data, text="Pianificazione Commessa", font=ctk.CTkFont(size=14, weight="bold")).pack(
-            anchor="w", padx=10, pady=(2, 1)
-        )
-        
-        # Alert frame per budget
-        self.pm_budget_alert_frame = ctk.CTkFrame(right_data, fg_color="transparent")
-        self.pm_budget_alert_frame.pack(fill="x", padx=10, pady=1)
-        
-        ctk.CTkLabel(right_data, text="Periodo:", font=ctk.CTkFont(size=12)).pack(anchor="w", padx=10, pady=(1, 0))
-        self.pm_project_dates_label = ctk.CTkLabel(right_data, text="Non pianificata", font=ctk.CTkFont(size=12))
-        self.pm_project_dates_label.pack(anchor="w", padx=10, pady=(0, 1))
-        
-        ctk.CTkLabel(right_data, text="Ore preventivate:", font=ctk.CTkFont(size=12)).pack(anchor="w", padx=10, pady=(1, 0))
-        self.pm_project_hours_label = ctk.CTkLabel(right_data, text="--", font=ctk.CTkFont(size=12))
-        self.pm_project_hours_label.pack(anchor="w", padx=10, pady=(0, 1))
-        
-        ctk.CTkLabel(right_data, text="Budget (€):", font=ctk.CTkFont(size=12)).pack(anchor="w", padx=10, pady=(1, 0))
-        self.pm_project_budget_label = ctk.CTkLabel(right_data, text="--", font=ctk.CTkFont(size=12))
-        self.pm_project_budget_label.pack(anchor="w", padx=10, pady=(0, 2))
-        
-        # Utenti assegnati (solo admin)
-        if self.is_admin:
-            ctk.CTkLabel(right_data, text="Utenti assegnati:", font=ctk.CTkFont(size=12, weight="bold")).pack(
-                anchor="w", padx=10, pady=(8, 2)
-            )
-            self.pm_users_frame = ctk.CTkFrame(right_data, fg_color="transparent")
-            self.pm_users_frame.pack(fill="x", padx=10, pady=(0, 4))
-            # I checkbox verranno popolati dinamicamente in on_pm_project_change
-            self.pm_user_checkboxes = {}  # {user_id: CTkCheckBox}
-
-        # ========== PANNELLO 2: GESTIONE ATTIVITÀ ==========
-        middle_panel = tk.Frame(paned_vertical)
-        paned_vertical.add(middle_panel, weight=0)
-        
-        activity_frame = ctk.CTkFrame(middle_panel)
-        activity_frame.pack(fill="both", expand=True, padx=4, pady=4)
+        # Box riepilogo commessa selezionata (frame inferiore)
+        project_info_frame = ctk.CTkFrame(projects_paned_v)
         
         ctk.CTkLabel(
-            activity_frame, text="Gestione Attività della Commessa", 
+            project_info_frame, text="📋 Riepilogo Commessa", 
+            font=ctk.CTkFont(size=12, weight="bold")
+        ).pack(anchor="w", padx=8, pady=(8, 4))
+        
+        self.project_info_text = ctk.CTkTextbox(project_info_frame, height=100, wrap="word")
+        self.project_info_text.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+        self.project_info_text.configure(state="disabled")
+        
+        # Aggiungi box info al paned window verticale
+        projects_paned_v.add(project_info_frame, weight=1)
+        
+        # Aggiungi il container delle commesse al paned window orizzontale
+        lists_paned.add(projects_container, weight=1)
+        
+        # Frame per elenco attività con PanedWindow verticale
+        activities_container = ctk.CTkFrame(lists_paned)
+        activities_paned_v = ttk.PanedWindow(activities_container, orient=tk.VERTICAL)
+        activities_paned_v.pack(fill="both", expand=True)
+        
+        # Frame superiore: treeview attività
+        activities_frame = ctk.CTkFrame(activities_paned_v)
+        activities_frame.grid_rowconfigure(3, weight=1)
+        activities_frame.grid_columnconfigure(0, weight=1)
+        
+        # Header e pulsanti attività
+        header_activities = ctk.CTkFrame(activities_frame, fg_color="transparent")
+        header_activities.grid(row=0, column=0, columnspan=2, padx=8, pady=(8, 4), sticky="ew")
+        
+        ctk.CTkLabel(
+            header_activities, text="Attività della Commessa", 
             font=ctk.CTkFont(size=13, weight="bold")
-        ).grid(row=0, column=0, columnspan=8, padx=10, pady=(8, 4), sticky="w")
+        ).pack(side="left")
         
-        ctk.CTkLabel(activity_frame, text="Nome attività:").grid(row=1, column=0, padx=(10, 5), pady=4, sticky="w")
-        self.pm_activity_name_entry = ctk.CTkEntry(activity_frame, placeholder_text="Inserisci nome attività", width=200)
-        self.pm_activity_name_entry.grid(row=1, column=1, columnspan=2, padx=5, pady=4, sticky="ew")
+        # Pulsanti gestione attività
+        buttons_activities = ctk.CTkFrame(activities_frame, fg_color="transparent")
+        buttons_activities.grid(row=1, column=0, columnspan=2, padx=8, pady=(0, 4), sticky="w")
         
-        ctk.CTkLabel(activity_frame, text="Note:").grid(row=1, column=3, padx=(10, 5), pady=4, sticky="w")
-        self.pm_activity_notes_entry = ctk.CTkEntry(activity_frame, placeholder_text="Note opzionali", width=200)
-        self.pm_activity_notes_entry.grid(row=1, column=4, columnspan=2, padx=5, pady=4, sticky="ew")
+        self.pm_new_activity_btn = ctk.CTkButton(
+            buttons_activities, text="➕ Nuova", width=100,
+            command=self.pm_new_activity
+        )
+        self.pm_new_activity_btn.pack(side="left", padx=(0, 5))
         
-        if self.is_admin:
-            ctk.CTkLabel(activity_frame, text="Costo (€/h):").grid(row=1, column=6, padx=(10, 5), pady=4, sticky="w")
-            self.pm_activity_rate_entry = ctk.CTkEntry(activity_frame, placeholder_text="0", width=80)
-            self.pm_activity_rate_entry.grid(row=1, column=7, padx=5, pady=4, sticky="w")
+        self.pm_edit_activity_btn = ctk.CTkButton(
+            buttons_activities, text="✏️ Modifica", width=100,
+            command=self.pm_edit_activity_window
+        )
+        self.pm_edit_activity_btn.pack(side="left")
         
-        # Pianificazione: tutto su una riga compatta
+        # Campo di ricerca per attività
+        search_activities_frame = ctk.CTkFrame(activities_frame, fg_color="transparent")
+        search_activities_frame.grid(row=2, column=0, columnspan=2, padx=8, pady=(4, 4), sticky="ew")
+        search_activities_frame.grid_columnconfigure(1, weight=1)
+        
+        ctk.CTkLabel(search_activities_frame, text="🔍 Filtra:").grid(row=0, column=0, padx=(0, 5))
+        self.activity_search_var = tk.StringVar()
+        self.activity_search_var.trace("w", lambda *args: self.filter_activities_tree())
+        self.activity_search_entry = ctk.CTkEntry(search_activities_frame, textvariable=self.activity_search_var, placeholder_text="Cerca attività...")
+        self.activity_search_entry.grid(row=0, column=1, sticky="ew")
+        
+        # Treeview attività con colonne visibili (senza ore effettive)
+        activities_columns = ("dates", "planned_hours", "budget", "rate")
+        self.activities_tree = ttk.Treeview(activities_frame, columns=activities_columns, show="tree headings")
+        self.activities_tree.heading("#0", text="Nome Attività")
+        self.activities_tree.heading("dates", text="Date (inizio - fine)")
+        self.activities_tree.heading("planned_hours", text="Ore pianif.")
+        self.activities_tree.heading("budget", text="Budget €")
+        self.activities_tree.heading("rate", text="Tariffa €/h")
+        
+        self.activities_tree.column("#0", width=200, anchor="w")
+        self.activities_tree.column("dates", width=150, anchor="center")
+        self.activities_tree.column("planned_hours", width=90, anchor="e")
+        self.activities_tree.column("budget", width=90, anchor="e")
+        self.activities_tree.column("rate", width=90, anchor="e")
+        
+        self.activities_tree.grid(row=3, column=0, sticky="nsew", padx=(8, 0), pady=(0, 8))
+        self.activities_tree.bind("<<TreeviewSelect>>", self.on_pm_activities_tree_select)
+        self.activities_tree.bind("<Double-Button-1>", self.on_activities_tree_double_click)
+        
+        # Abilita ordinamento per le colonne delle attività
+        for col in ["#0"] + list(activities_columns):
+            self.activities_tree.heading(col, command=lambda c=col: self.sort_activities_tree(c))
+        
+        scroll_activities_y = ttk.Scrollbar(activities_frame, orient="vertical", command=self.activities_tree.yview)
+        self.activities_tree.configure(yscrollcommand=scroll_activities_y.set)
+        scroll_activities_y.grid(row=3, column=1, sticky="ns", pady=(0, 8))
+        
+        # Aggiungi frame treeview al paned window verticale
+        activities_paned_v.add(activities_frame, weight=3)
+        
+        # Box riepilogo attività selezionata (frame inferiore)
+        activity_info_frame = ctk.CTkFrame(activities_paned_v)
+        
         ctk.CTkLabel(
-            activity_frame, text="Pianificazione:", 
-            font=ctk.CTkFont(size=11, weight="bold")
-        ).grid(row=2, column=0, padx=(10, 5), pady=(8, 4), sticky="w")
+            activity_info_frame, text="📋 Riepilogo Attività", 
+            font=ctk.CTkFont(size=12, weight="bold")
+        ).pack(anchor="w", padx=8, pady=(8, 4))
         
-        ctk.CTkLabel(activity_frame, text="Da:").grid(row=2, column=1, padx=(5, 2), pady=(8, 4), sticky="e")
-        self.pm_activity_start_entry = ctk.CTkEntry(activity_frame, placeholder_text="gg/mm/aaaa", width=90)
-        self.pm_activity_start_entry.grid(row=2, column=2, padx=2, pady=(8, 4), sticky="w")
-        self.setup_date_entry_helpers(self.pm_activity_start_entry)
+        self.activity_info_text = ctk.CTkTextbox(activity_info_frame, height=80, wrap="word")
+        self.activity_info_text.pack(fill="both", expand=True, padx=8, pady=(0, 4))
+        self.activity_info_text.configure(state="disabled")
         
-        ctk.CTkLabel(activity_frame, text="A:").grid(row=2, column=3, padx=(5, 2), pady=(8, 4), sticky="e")
-        self.pm_activity_end_entry = ctk.CTkEntry(activity_frame, placeholder_text="gg/mm/aaaa", width=90)
-        self.pm_activity_end_entry.grid(row=2, column=4, padx=2, pady=(8, 4), sticky="w")
-        self.setup_date_entry_helpers(self.pm_activity_end_entry)
+        # Gestione utenti assegnati all'attività
+        user_selection_frame = ctk.CTkFrame(activity_info_frame, fg_color="transparent")
+        user_selection_frame.pack(fill="both", expand=True, padx=8, pady=(4, 8))
         
-        ctk.CTkLabel(activity_frame, text="Ore:").grid(row=2, column=5, padx=(10, 2), pady=(8, 4), sticky="e")
-        self.pm_activity_hours_entry = ctk.CTkEntry(activity_frame, placeholder_text="160", width=70)
-        self.pm_activity_hours_entry.grid(row=2, column=6, padx=2, pady=(8, 4), sticky="w")
+        ctk.CTkLabel(user_selection_frame, text="👥 Utenti assegnati:", font=ctk.CTkFont(weight="bold")).pack(anchor="w", pady=(0, 4))
         
-        ctk.CTkLabel(activity_frame, text="Budget €:").grid(row=2, column=7, padx=(10, 2), pady=(8, 4), sticky="e")
-        self.pm_activity_budget_entry = ctk.CTkEntry(activity_frame, placeholder_text="0", width=80)
-        self.pm_activity_budget_entry.grid(row=2, column=8, padx=2, pady=(8, 4), sticky="w")
+        users_list_frame = ctk.CTkFrame(user_selection_frame, fg_color="transparent")
+        users_list_frame.pack(fill="both", expand=True)
         
-        btn_activity_frame = ctk.CTkFrame(activity_frame, fg_color="transparent")
-        btn_activity_frame.grid(row=3, column=0, columnspan=9, padx=10, pady=(8, 10), sticky="ew")
+        self.activity_users_listbox = tk.Listbox(users_list_frame, height=4, selectmode=tk.SINGLE, font=("Arial", 12))
+        self.activity_users_listbox.pack(side="left", fill="both", expand=True)
         
-        ctk.CTkButton(btn_activity_frame, text="Aggiungi Attività", command=self.pm_add_activity, width=140).pack(
-            side="left", padx=(0, 5)
-        )
-        ctk.CTkButton(btn_activity_frame, text="Modifica Selezionata", command=self.pm_edit_activity, width=140).pack(
-            side="left", padx=5
-        )
-        ctk.CTkButton(btn_activity_frame, text="Elimina Selezionata", command=self.pm_delete_activity, width=140).pack(
-            side="left", padx=5
-        )
+        users_scroll = ttk.Scrollbar(users_list_frame, orient="vertical", command=self.activity_users_listbox.yview)
+        self.activity_users_listbox.configure(yscrollcommand=users_scroll.set)
+        users_scroll.pack(side="left", fill="y")
         
-        activity_frame.grid_columnconfigure(2, weight=1)
-        activity_frame.grid_columnconfigure(4, weight=1)
-
-        # ========== PANNELLO 3: LISTA ATTIVITÀ COMMESSA SELEZIONATA ==========
-        bottom_panel = tk.Frame(paned_vertical)
-        paned_vertical.add(bottom_panel, weight=1)
+        users_buttons_frame = ctk.CTkFrame(user_selection_frame, fg_color="transparent")
+        users_buttons_frame.pack(fill="x", pady=(4, 0))
         
-        tree_frame = ctk.CTkFrame(bottom_panel)
-        tree_frame.pack(fill="both", expand=True, padx=4, pady=4)
-        tree_frame.grid_rowconfigure(0, weight=1)
-        tree_frame.grid_columnconfigure(0, weight=1)
-
-        ctk.CTkLabel(tree_frame, text="Attività della Commessa Selezionata", 
-                    font=ctk.CTkFont(size=13, weight="bold")).grid(row=0, column=0, columnspan=2, padx=10, pady=(8, 4), sticky="w")
-
-        # Colonne con dati dettagliati
-        if self.is_admin:
-            columns = ("dates", "planned_hours", "actual_hours", "budget", "actual_cost", "rate")
-        else:
-            columns = ("dates", "planned_hours", "actual_hours")
+        ctk.CTkButton(users_buttons_frame, text="➕ Aggiungi", width=100, command=self.add_user_to_activity).pack(side="left", padx=(0, 4))
+        ctk.CTkButton(users_buttons_frame, text="➖ Rimuovi", width=100, command=self.remove_user_from_activity).pack(side="left")
         
-        self.master_tree = ttk.Treeview(tree_frame, columns=columns, show="tree headings")
-        self.master_tree.heading("#0", text="Nome Attività")
-        self.master_tree.heading("dates", text="Date (inizio - fine)")
-        self.master_tree.heading("planned_hours", text="Ore pianif.")
-        self.master_tree.heading("actual_hours", text="Ore effett.")
+        # Aggiungi box info al paned window verticale
+        activities_paned_v.add(activity_info_frame, weight=1)
         
-        if self.is_admin:
-            self.master_tree.heading("budget", text="Budget €")
-            self.master_tree.heading("actual_cost", text="Costo €")
-            self.master_tree.heading("rate", text="Tariffa €/h")
-            
-            self.master_tree.column("#0", width=250, anchor="w")
-            self.master_tree.column("dates", width=150, anchor="center")
-            self.master_tree.column("planned_hours", width=90, anchor="e")
-            self.master_tree.column("actual_hours", width=90, anchor="e")
-            self.master_tree.column("budget", width=90, anchor="e")
-            self.master_tree.column("actual_cost", width=90, anchor="e")
-            self.master_tree.column("rate", width=90, anchor="e")
-        else:
-            self.master_tree.column("#0", width=350, anchor="w")
-            self.master_tree.column("dates", width=180, anchor="center")
-            self.master_tree.column("planned_hours", width=110, anchor="e")
-            self.master_tree.column("actual_hours", width=110, anchor="e")
+        # Aggiungi il container delle attività al paned window orizzontale
+        lists_paned.add(activities_container, weight=1)
         
-        self.master_tree.grid(row=1, column=0, sticky="nsew")
-        self.master_tree.bind("<<TreeviewSelect>>", self.on_pm_tree_select)
-
-        scroll_y = ttk.Scrollbar(tree_frame, orient="vertical", command=self.master_tree.yview)
-        self.master_tree.configure(yscrollcommand=scroll_y.set)
-        scroll_y.grid(row=1, column=1, sticky="ns")
-        
-        scroll_x = ttk.Scrollbar(tree_frame, orient="horizontal", command=self.master_tree.xview)
-        self.master_tree.configure(xscrollcommand=scroll_x.set)
-        scroll_x.grid(row=2, column=0, sticky="ew")
-        
-        # Variabili per tracciare la commessa selezionata
+        # Variabili per tracciare selezioni
         self.selected_project_id = None
         self.selected_activity_id = None
+        
+        # Inizializza i box informativi
+        self.clear_project_info_box()
+        self.clear_activity_info_box()
 
     # ========== GESTIONE COMMESSE: Nuove Funzioni ==========
     
     def on_pm_client_change(self, _value: str) -> None:
-        """Aggiorna la combo commesse quando cambia il cliente."""
+        """Aggiorna l'elenco commesse quando cambia il cliente selezionato."""
+        self.refresh_projects_tree()
+        self.refresh_activities_tree()  # Pulisce attività quando cambia cliente
+    
+    def refresh_projects_tree(self) -> None:
+        """Aggiorna l'elenco delle commesse del cliente selezionato."""
+        if not hasattr(self, 'projects_tree'):
+            return
+        
+        # Configura tag per commesse chiuse
+        self.projects_tree.tag_configure("closed_project", foreground="gray60")
+        
+        # Pulisci treeview
+        for item in self.projects_tree.get_children():
+            self.projects_tree.delete(item)
+        
         client_id = self._id_from_option(self.pm_client_combo.get())
-        if client_id:
-            projects = self.db.list_projects(client_id)
-            project_options = [self._project_option(row) for row in projects]
-        else:
-            project_options = [""]
-        
-        self._set_combo_values(self.pm_project_combo, project_options)
-        self.pm_project_combo.set("")
-        self.on_pm_project_change("")
-    
-    def on_pm_project_change(self, _value: str) -> None:
-        """Aggiorna i dati della commessa quando viene selezionata."""
-        project_id = self._id_from_option(self.pm_project_combo.get())
-        self.selected_project_id = project_id
-        
-        if not project_id:
-            # Nessuna commessa selezionata, pulisci i dati
-            self.pm_project_name_label.configure(text="Nessuna commessa selezionata")
-            self.pm_project_client_label.configure(text="--")
-            self.pm_client_referente_label.configure(text="--")
-            self.pm_client_telefono_label.configure(text="--")
-            self.pm_client_email_label.configure(text="--")
-            if self.is_admin:
-                self.pm_project_rate_label.configure(text="--")
-            self.pm_project_notes_label.configure(text="--")
-            self.pm_project_dates_label.configure(text="Non pianificata")
-            self.pm_project_hours_label.configure(text="--")
-            self.pm_project_budget_label.configure(text="--")
-            self.clear_budget_alert()
+        if not client_id:
+            self._projects_data = []
             return
         
-        # Carica dati commessa
-        projects = self.db.list_projects()
-        project = next((p for p in projects if p["id"] == project_id), None)
-        
-        if not project:
-            return
-        
-        self.pm_project_name_label.configure(text=project["name"])
-        self.pm_project_client_label.configure(text=project.get("client_name", "--"))
-        self.pm_client_referente_label.configure(text=project.get("client_referente", "--") or "--")
-        self.pm_client_telefono_label.configure(text=project.get("client_telefono", "--") or "--")
-        self.pm_client_email_label.configure(text=project.get("client_email", "--") or "--")
-        if self.is_admin:
-            self.pm_project_rate_label.configure(text=f"{project['hourly_rate']:.2f} €/h")
-        self.pm_project_notes_label.configure(text=project.get("notes", "--") or "--")
-        
-        # Carica pianificazione commessa
+        # Carica commesse del cliente
+        projects = self.db.list_projects(client_id)
         schedules = self.db.list_schedules()
-        project_schedule = next((s for s in schedules if s["project_id"] == project_id and s["activity_id"] is None), None)
         
-        if project_schedule:
-            start = datetime.strptime(project_schedule["start_date"], "%Y-%m-%d").strftime("%d/%m/%Y")
-            end = datetime.strptime(project_schedule["end_date"], "%Y-%m-%d").strftime("%d/%m/%Y")
-            self.pm_project_dates_label.configure(text=f"{start} - {end}")
-            self.pm_project_hours_label.configure(text=f"{project_schedule['planned_hours']} h")
-            self.pm_project_budget_label.configure(text=f"{project_schedule.get('budget', 0):.2f} €")
+        # Controlla se mostrare le commesse chiuse
+        show_closed = self.show_closed_projects.get() if hasattr(self, 'show_closed_projects') else True
+        
+        # Salva dati per il filtro
+        self._projects_data = []
+        
+        for project in projects:
+            # Trova la schedule del progetto per determinare lo stato
+            project_schedule = next((s for s in schedules if s["project_id"] == project["id"] and s["activity_id"] is None), None)
             
-            # Verifica budget attività
-            self.check_activities_budget(project_id, project_schedule['planned_hours'], project_schedule.get('budget', 0))
-        else:
-            self.pm_project_dates_label.configure(text="Non pianificata")
-            self.pm_project_hours_label.configure(text="--")
-            self.pm_project_budget_label.configure(text="--")
-            self.clear_budget_alert()
-        
-        # Aggiorna checkbox utenti assegnati (solo admin)
-        if self.is_admin:
-            self.refresh_user_checkboxes()
-        
-        # Aggiorna lista attività della commessa selezionata
-        self.refresh_project_activities_tree()
-    
-    def refresh_user_checkboxes(self) -> None:
-        """Aggiorna i checkbox degli utenti assegnati alla commessa."""
-        if not hasattr(self, 'pm_users_frame'):
-            return
-        
-        # Pulisci checkbox esistenti
-        for widget in self.pm_users_frame.winfo_children():
-            widget.destroy()
-        self.pm_user_checkboxes.clear()
-        
-        if not self.selected_project_id:
-            return
-        
-        # Carica tutti gli utenti attivi
-        all_users = self.db.list_users()
-        active_users = [u for u in all_users if u["active"] == 1]
-        
-        # Carica utenti già assegnati
-        assigned_users = self.db.list_users_assigned_to_project(self.selected_project_id)
-        assigned_ids = {u["id"] for u in assigned_users}
-        
-        # Crea checkbox per ogni utente
-        for user in active_users:
-            var = tk.BooleanVar(value=user["id"] in assigned_ids)
-            cb = ctk.CTkCheckBox(
-                self.pm_users_frame,
-                text=f"{user['full_name']} ({user['username']})",
-                variable=var,
-                command=lambda uid=user["id"], v=var: self.on_user_assignment_toggle(uid, v)
-            )
-            cb.pack(anchor="w", pady=1)
-            self.pm_user_checkboxes[user["id"]] = (cb, var)
-    
-    def on_user_assignment_toggle(self, user_id: int, var: tk.BooleanVar) -> None:
-        """Gestisce il cambio stato di assegnazione utente."""
-        if not self.selected_project_id:
-            return
-        
-        try:
-            if var.get():
-                self.db.assign_user_to_project(user_id, self.selected_project_id)
+            # Verifica se è chiusa: controlla sia schedule che campo closed
+            is_closed = False
+            if project_schedule:
+                # Ha una schedule: usa il suo status
+                is_closed = project_schedule.get("status", "aperta") == "chiusa"
             else:
-                self.db.unassign_user_from_project(user_id, self.selected_project_id)
-        except Exception as e:
-            messagebox.showerror("Gestione Commesse", f"Errore assegnazione: {e}")
-            var.set(not var.get())  # Ripristina stato precedente
+                # Non ha schedule: usa il campo closed
+                is_closed = project.get("closed", 0) == 1
+            
+            # Filtra commesse chiuse se necessario
+            if is_closed and not show_closed:
+                continue
+            
+            # Determina lo stato
+            stato_text = "Chiusa" if is_closed else "Aperta"
+            
+            # Cerca pianificazione per la commessa
+            dates_text = "--"
+            planned_hours = "--"
+            budget = "--"
+            referente = project.get("referente_commessa", "--") or "--"
+            
+            if project_schedule:
+                start = datetime.strptime(project_schedule["start_date"], "%Y-%m-%d").strftime("%d/%m/%y")
+                end = datetime.strptime(project_schedule["end_date"], "%Y-%m-%d").strftime("%d/%m/%y")
+                dates_text = f"{start} - {end}"
+                planned_hours = f"{project_schedule['planned_hours']:.0f}"
+                budget = f"{project_schedule.get('budget', 0):.2f}"
+            
+            values = (stato_text, referente, dates_text, planned_hours, budget)
+            tags = ("closed_project",) if is_closed else ()
+            
+            # Salva i dati
+            self._projects_data.append({
+                'id': str(project["id"]),
+                'text': project["name"],
+                'values': values,
+                'tags': tags
+            })
+        
+        # Applica il filtro di ricerca se presente
+        self.filter_projects_tree()
     
-    def refresh_project_activities_tree(self) -> None:
-        """Aggiorna il treeview mostrando solo le attività della commessa selezionata."""
-        if not hasattr(self, 'master_tree'):
+    def refresh_activities_tree(self) -> None:
+        """Aggiorna l'elenco delle attività della commessa selezionata."""
+        if not hasattr(self, 'activities_tree'):
             return
         
         # Pulisci treeview
-        for item in self.master_tree.get_children():
-            self.master_tree.delete(item)
+        for item in self.activities_tree.get_children():
+            self.activities_tree.delete(item)
         
-        # Se non c'è una commessa selezionata, treeview vuoto
         if not self.selected_project_id:
+            self._activities_data = []
             return
         
-        # Carica tutti gli schedule una volta sola
-        all_schedules = self.db.list_schedules()
-        
-        # Mostra solo le attività della commessa selezionata
+        # Carica attività della commessa
         activities = self.db.list_activities(self.selected_project_id)
+        schedules = self.db.list_schedules()
+        
+        # Salva dati per il filtro
+        self._activities_data = []
         
         for activity in activities:
             # Cerca pianificazione per l'attività
             dates_text = "--"
-            planned_hours = 0.0
-            budget = 0.0
+            planned_hours = "--"
+            budget = "--"
             
-            for sched in all_schedules:
+            for sched in schedules:
                 if sched["project_id"] == self.selected_project_id and sched["activity_id"] == activity["id"]:
                     start = datetime.strptime(sched["start_date"], "%Y-%m-%d").strftime("%d/%m/%y")
                     end = datetime.strptime(sched["end_date"], "%Y-%m-%d").strftime("%d/%m/%y")
                     dates_text = f"{start} - {end}"
-                    planned_hours = float(sched["planned_hours"])
-                    budget = float(sched.get("budget", 0))
+                    planned_hours = f"{sched['planned_hours']:.1f}"
+                    budget = f"{sched.get('budget', 0):.2f}"
                     break
             
-            # Recupera ore effettive e costi per questa attività
-            actual_data = self.db.get_activity_actual_data(self.selected_project_id, activity["id"])
-            actual_hours = actual_data["actual_hours"]
-            actual_cost = actual_data["actual_cost"]
+            values = (dates_text, planned_hours, budget, f"{activity['hourly_rate']:.2f}")
             
-            if self.is_admin:
-                values = (
-                    dates_text,
-                    f"{planned_hours:.1f}" if planned_hours > 0 else "--",
-                    f"{actual_hours:.1f}" if actual_hours > 0 else "--",
-                    f"{budget:.2f}" if budget > 0 else "--",
-                    f"{actual_cost:.2f}" if actual_cost > 0 else "--",
-                    f"{activity['hourly_rate']:.2f}"
-                )
-            else:
-                values = (
-                    dates_text,
-                    f"{planned_hours:.1f}" if planned_hours > 0 else "--",
-                    f"{actual_hours:.1f}" if actual_hours > 0 else "--"
-                )
-                
-            self.master_tree.insert(
-                "",
-                "end",
-                text=activity["name"],
-                values=values,
-                tags=(f"activity_{activity['id']}",),
-            )
-    
-    def check_activities_budget(self, project_id: int, project_hours: float, project_budget: float) -> None:
-        """Verifica se le attività superano il budget della commessa."""
-        schedules = self.db.list_schedules()
-        activities_schedules = [s for s in schedules if s["project_id"] == project_id and s["activity_id"] is not None]
+            # Salva i dati
+            self._activities_data.append({
+                'id': str(activity["id"]),
+                'text': activity["name"],
+                'values': values
+            })
         
-        if not activities_schedules:
-            self.clear_budget_alert()
+        # Applica il filtro di ricerca se presente
+        self.filter_activities_tree()
+    
+    def filter_projects_tree(self) -> None:
+        """Filtra la visualizzazione delle commesse in base al testo di ricerca."""
+        if not hasattr(self, 'projects_tree') or not hasattr(self, '_projects_data'):
             return
         
-        total_activity_hours = sum(s["planned_hours"] for s in activities_schedules)
-        total_activity_budget = sum(s.get("budget", 0) for s in activities_schedules)
+        # Ottieni il testo di ricerca
+        search_text = ""
+        if hasattr(self, 'project_search_var'):
+            search_text = self.project_search_var.get().lower().strip()
         
-        hours_exceeded = total_activity_hours > project_hours
-        budget_exceeded = total_activity_budget > project_budget if project_budget > 0 else False
+        # Salva la selezione corrente
+        current_selection = self.projects_tree.selection()
         
-        if hours_exceeded or budget_exceeded:
-            self.show_budget_alert(hours_exceeded, budget_exceeded, total_activity_hours, project_hours, 
-                                   total_activity_budget, project_budget)
+        # Pulisci il tree
+        for item in self.projects_tree.get_children():
+            self.projects_tree.delete(item)
+        
+        # Reinserisci solo gli item che corrispondono al filtro
+        for project_data in self._projects_data:
+            # Se non c'è filtro, mostra tutto
+            if not search_text:
+                self.projects_tree.insert("", "end", 
+                                         iid=project_data['id'],
+                                         text=project_data['text'], 
+                                         values=project_data['values'],
+                                         tags=project_data['tags'])
+            else:
+                # Verifica se il testo di ricerca è contenuto nel nome o nei valori
+                item_text = project_data['text'].lower()
+                item_values = [str(v).lower() for v in project_data['values']]
+                
+                if search_text in item_text or any(search_text in v for v in item_values):
+                    self.projects_tree.insert("", "end", 
+                                             iid=project_data['id'],
+                                             text=project_data['text'], 
+                                             values=project_data['values'],
+                                             tags=project_data['tags'])
+        
+        # Ripristina la selezione se l'item è ancora visibile
+        if current_selection:
+            try:
+                if self.projects_tree.exists(current_selection[0]):
+                    self.projects_tree.selection_set(current_selection[0])
+            except:
+                pass
+    
+    def filter_activities_tree(self) -> None:
+        """Filtra la visualizzazione delle attività in base al testo di ricerca."""
+        if not hasattr(self, 'activities_tree') or not hasattr(self, '_activities_data'):
+            return
+        
+        # Ottieni il testo di ricerca
+        search_text = ""
+        if hasattr(self, 'activity_search_var'):
+            search_text = self.activity_search_var.get().lower().strip()
+        
+        # Salva la selezione corrente
+        current_selection = self.activities_tree.selection()
+        
+        # Pulisci il tree
+        for item in self.activities_tree.get_children():
+            self.activities_tree.delete(item)
+        
+        # Reinserisci solo gli item che corrispondono al filtro
+        for activity_data in self._activities_data:
+            # Se non c'è filtro, mostra tutto
+            if not search_text:
+                self.activities_tree.insert("", "end", 
+                                           iid=activity_data['id'],
+                                           text=activity_data['text'], 
+                                           values=activity_data['values'])
+            else:
+                # Verifica se il testo di ricerca è contenuto nel nome o nei valori
+                item_text = activity_data['text'].lower()
+                item_values = [str(v).lower() for v in activity_data['values']]
+                
+                if search_text in item_text or any(search_text in v for v in item_values):
+                    self.activities_tree.insert("", "end", 
+                                               iid=activity_data['id'],
+                                               text=activity_data['text'], 
+                                               values=activity_data['values'])
+        
+        # Ripristina la selezione se l'item è ancora visibile
+        if current_selection:
+            try:
+                if self.activities_tree.exists(current_selection[0]):
+                    self.activities_tree.selection_set(current_selection[0])
+            except:
+                pass
+    
+    def sort_projects_tree(self, col: str) -> None:
+        """Ordina la treeview delle commesse per la colonna selezionata."""
+        if not hasattr(self, '_projects_data') or not self._projects_data:
+            return
+        
+        # Determina la direzione di ordinamento
+        if self._projects_sort_col == col:
+            self._projects_sort_reverse = not self._projects_sort_reverse
         else:
-            self.clear_budget_alert()
-    
-    def show_budget_alert(self, hours_exceeded: bool, budget_exceeded: bool, 
-                         total_hours: float, project_hours: float,
-                         total_budget: float, project_budget: float) -> None:
-        """Mostra alert visivo se i budget sono superati."""
-        # Pulisci alert precedente
-        for widget in self.pm_budget_alert_frame.winfo_children():
-            widget.destroy()
+            self._projects_sort_col = col
+            self._projects_sort_reverse = False
         
-        alert_text = "⚠️ ATTENZIONE:"
-        details = []
+        # Mappa delle colonne agli indici
+        col_map = {
+            "#0": "text",
+            "stato": 0,
+            "referente": 1,
+            "dates": 2,
+            "hours": 3,
+            "budget": 4
+        }
         
-        if hours_exceeded:
-            details.append(f"Ore attività ({total_hours}h) > Ore commessa ({project_hours}h)")
-        if budget_exceeded:
-            details.append(f"Budget attività (€{total_budget:.2f}) > Budget commessa (€{project_budget:.2f})")
-        
-        alert_label = ctk.CTkLabel(
-            self.pm_budget_alert_frame, 
-            text=alert_text + " " + " | ".join(details),
-            font=ctk.CTkFont(size=11, weight="bold"),
-            text_color="#FF4444"
-        )
-        alert_label.pack(anchor="w", padx=5, pady=2)
-    
-    def clear_budget_alert(self) -> None:
-        """Rimuove l'alert budget."""
-        for widget in self.pm_budget_alert_frame.winfo_children():
-            widget.destroy()
-    
-    def pm_add_activity(self) -> None:
-        """Aggiunge un'attività alla commessa selezionata."""
-        if not self.selected_project_id:
-            messagebox.showinfo("Gestione Commesse", "Seleziona prima una commessa.")
-            return
-        
-        try:
-            name = self.pm_activity_name_entry.get().strip()
-            if not name:
-                raise ValueError("Nome attività obbligatorio.")
-            
-            if self.is_admin and hasattr(self, 'pm_activity_rate_entry'):
-                rate = self._to_float(self.pm_activity_rate_entry.get().strip() or "0", "Costo attività")
+        # Funzione di chiave per ordinamento
+        def sort_key(item):
+            if col == "#0":
+                return item["text"].lower()
             else:
-                rate = 0.0
-            
-            notes = self.pm_activity_notes_entry.get().strip()
-            
-            # Crea l'attività
-            activity_id = self.db.add_activity(self.selected_project_id, name, rate, notes)
-            
-            # Se ci sono dati di pianificazione completi, crea anche uno schedule
-            start_date_str = self.pm_activity_start_entry.get().strip()
-            end_date_str = self.pm_activity_end_entry.get().strip()
-            hours_str = self.pm_activity_hours_entry.get().strip()
-            budget_str = self.pm_activity_budget_entry.get().strip()
-            
-            # Crea schedule solo se ci sono TUTTI i dati necessari (date + ore)
-            if start_date_str and end_date_str and hours_str:
-                start_date = datetime.strptime(start_date_str, "%d/%m/%Y").strftime("%Y-%m-%d")
-                end_date = datetime.strptime(end_date_str, "%d/%m/%Y").strftime("%Y-%m-%d")
-                
-                if start_date > end_date:
-                    raise ValueError("La data di inizio deve essere precedente alla data di fine.")
-                
-                planned_hours = self._to_float(hours_str, "Ore preventivate")
-                if planned_hours <= 0:
-                    raise ValueError("Ore preventivate: il valore deve essere > 0.")
-                
-                budget = self._to_float(budget_str, "Budget") if budget_str else 0.0
-                
-                self.db.add_schedule(self.selected_project_id, activity_id, start_date, end_date, planned_hours, "", budget)
-            
-            messagebox.showinfo("Gestione Commesse", "Attività aggiunta con successo.")
-            
-        except ValueError as exc:
-            messagebox.showerror("Gestione Commesse", str(exc))
-            return
-        except sqlite3.IntegrityError as exc:
-            if "UNIQUE constraint" in str(exc):
-                messagebox.showerror("Gestione Commesse", f"Esiste già un'attività con questo nome per questa commessa.\nScegli un nome diverso.")
-            else:
-                messagebox.showerror("Gestione Commesse", f"Errore database: {exc}")
-            return
+                idx = col_map[col]
+                value = item["values"][idx]
+                # Prova a convertire in numero per ore e budget
+                if col in ("hours", "budget"):
+                    try:
+                        return float(value.replace(",", ".")) if value != "--" else -1
+                    except:
+                        return -1
+                return str(value).lower()
         
-        # Pulisci i campi
-        self.pm_activity_name_entry.delete(0, "end")
-        if self.is_admin and hasattr(self, 'pm_activity_rate_entry'):
-            self.pm_activity_rate_entry.delete(0, "end")
-        self.pm_activity_notes_entry.delete(0, "end")
-        self.pm_activity_start_entry.delete(0, "end")
-        self.pm_activity_end_entry.delete(0, "end")
-        self.pm_activity_hours_entry.delete(0, "end")
-        self.pm_activity_budget_entry.delete(0, "end")
+        # Ordina i dati
+        self._projects_data.sort(key=sort_key, reverse=self._projects_sort_reverse)
         
-        # Ricarica attività e verifica budget
-        self.refresh_project_activities_tree()
-        self.on_pm_project_change(self.pm_project_combo.get())
-        if hasattr(self, 'refresh_control_panel'):
-            self.refresh_control_panel()
+        # Riapplica il filtro (che ricarica il tree)
+        self.filter_projects_tree()
+        
+        # Aggiorna l'header per mostrare la direzione
+        for c in ["#0", "stato", "referente", "dates", "hours", "budget"]:
+            text = self.projects_tree.heading(c)["text"]
+            # Rimuovi frecce esistenti
+            text = text.replace(" ▲", "").replace(" ▼", "")
+            if c == col:
+                text += " ▼" if self._projects_sort_reverse else " ▲"
+            self.projects_tree.heading(c, text=text)
     
-    def pm_edit_activity(self) -> None:
-        """Modifica l'attività selezionata nel treeview."""
-        if not self.selected_activity_id:
-            messagebox.showinfo("Gestione Commesse", "Seleziona un'attività dall'elenco.")
+    def sort_activities_tree(self, col: str) -> None:
+        """Ordina la treeview delle attività per la colonna selezionata."""
+        if not hasattr(self, '_activities_data') or not self._activities_data:
             return
         
-        # Recupera project_id dall'attività
-        activities = self.db.list_activities()
-        project_id = None
-        for act in activities:
-            if act["id"] == self.selected_activity_id:
-                project_id = act["project_id"]
+        # Determina la direzione di ordinamento
+        if self._activities_sort_col == col:
+            self._activities_sort_reverse = not self._activities_sort_reverse
+        else:
+            self._activities_sort_col = col
+            self._activities_sort_reverse = False
+        
+        # Mappa delle colonne agli indici
+        col_map = {
+            "#0": "text",
+            "dates": 0,
+            "planned_hours": 1,
+            "budget": 2,
+            "rate": 3
+        }
+        
+        # Funzione di chiave per ordinamento
+        def sort_key(item):
+            if col == "#0":
+                return item["text"].lower()
+            else:
+                idx = col_map[col]
+                value = item["values"][idx]
+                # Prova a convertire in numero per ore, budget e tariffa
+                if col in ("planned_hours", "budget", "rate"):
+                    try:
+                        return float(value.replace(",", ".")) if value != "--" else -1
+                    except:
+                        return -1
+                return str(value).lower()
+        
+        # Ordina i dati
+        self._activities_data.sort(key=sort_key, reverse=self._activities_sort_reverse)
+        
+        # Riapplica il filtro (che ricarica il tree)
+        self.filter_activities_tree()
+        
+        # Aggiorna l'header per mostrare la direzione
+        for c in ["#0", "dates", "planned_hours", "budget", "rate"]:
+            text = self.activities_tree.heading(c)["text"]
+            # Rimuovi frecce esistenti
+            text = text.replace(" ▲", "").replace(" ▼", "")
+            if c == col:
+                text += " ▼" if self._activities_sort_reverse else " ▲"
+            self.activities_tree.heading(c, text=text)
+    
+    def on_pm_projects_tree_select(self, _event: tk.Event) -> None:
+        """Gestisce la selezione di una commessa nell'elenco."""
+        selected = self.projects_tree.selection()
+        if selected:
+            self.selected_project_id = int(selected[0])
+            
+            # Controlla se la commessa ha una schedule chiusa e disabilita i pulsanti di gestione attività
+            schedules = self.db.list_schedules()
+            project_schedule = next((s for s in schedules if s["project_id"] == self.selected_project_id and s["activity_id"] is None), None)
+            
+            # Verifica se è chiusa: controlla sia schedule che campo closed del progetto
+            project = self.db.get_project(self.selected_project_id)
+            is_closed = False
+            if project_schedule:
+                is_closed = project_schedule.get("status", "aperta") == "chiusa"
+            elif project:
+                is_closed = project.get("closed", 0) == 1
+            
+            if is_closed:
+                # Commessa chiusa: disabilita pulsanti attività
+                if hasattr(self, 'pm_new_activity_btn'):
+                    self.pm_new_activity_btn.configure(state="disabled")
+                if hasattr(self, 'pm_edit_activity_btn'):
+                    self.pm_edit_activity_btn.configure(state="disabled")
+            else:
+                # Commessa aperta: abilita pulsanti attività
+                if hasattr(self, 'pm_new_activity_btn'):
+                    self.pm_new_activity_btn.configure(state="normal")
+                if hasattr(self, 'pm_edit_activity_btn'):
+                    self.pm_edit_activity_btn.configure(state="normal")
+            
+            # Aggiorna il box riepilogo commessa
+            self.update_project_info_box(project, project_schedule, is_closed)
+        else:
+            self.selected_project_id = None
+            self.clear_project_info_box()
+        
+        self.refresh_activities_tree()
+    
+    def on_pm_activities_tree_select(self, _event: tk.Event) -> None:
+        """Gestisce la selezione di un'attività nell'elenco."""
+        selected = self.activities_tree.selection()
+        if selected:
+            self.selected_activity_id = int(selected[0])
+            # Aggiorna il box riepilogo attività
+            self.update_activity_info_box()
+        else:
+            self.selected_activity_id = None
+            self.clear_activity_info_box()
+    
+    def on_projects_tree_double_click(self, _event: tk.Event) -> None:
+        """Apre la finestra di modifica commessa con doppio click."""
+        if self.selected_project_id:
+            self.pm_edit_project()
+    
+    def on_activities_tree_double_click(self, _event: tk.Event) -> None:
+        """Apre la finestra di modifica attività con doppio click."""
+        if self.selected_activity_id:
+            self.pm_edit_activity_window()
+    
+    def update_project_info_box(self, project: dict, schedule: dict | None, is_closed: bool) -> None:
+        """Aggiorna il box informativo della commessa selezionata."""
+        if not hasattr(self, 'project_info_text'):
+            return
+        
+        self.project_info_text.configure(state="normal")
+        self.project_info_text.delete("1.0", "end")
+        
+        if project:
+            info = f"🏢 Nome: {project['name']}\n"
+            info += f"📊 Stato: {'Chiusa' if is_closed else 'Aperta'}\n"
+            info += f"👤 Referente: {project.get('referente_commessa', 'Non specificato')}\n"
+            
+            descrizione = project.get('descrizione_commessa', '').strip()
+            if descrizione:
+                info += f"📝 Descrizione: {descrizione}\n"
+            
+            if schedule:
+                info += f"📅 Inizio: {datetime.strptime(schedule['start_date'], '%Y-%m-%d').strftime('%d/%m/%Y')}\n"
+                info += f"📅 Fine: {datetime.strptime(schedule['end_date'], '%Y-%m-%d').strftime('%d/%m/%Y')}\n"
+                info += f"⏱️ Ore pianificate: {schedule['planned_hours']:.1f}\n"
+                info += f"💰 Budget: €{schedule.get('budget', 0):.2f}\n"
+            else:
+                info += "⚠️ Nessuna pianificazione impostata\n"
+            
+            notes = project.get('notes', '').strip()
+            if notes:
+                info += f"📄 Note: {notes}"
+            
+            self.project_info_text.insert("1.0", info)
+        
+        self.project_info_text.configure(state="disabled")
+    
+    def clear_project_info_box(self) -> None:
+        """Pulisce il box informativo della commessa."""
+        if hasattr(self, 'project_info_text'):
+            self.project_info_text.configure(state="normal")
+            self.project_info_text.delete("1.0", "end")
+            self.project_info_text.insert("1.0", "Nessuna commessa selezionata")
+            self.project_info_text.configure(state="disabled")
+    
+    def update_activity_info_box(self) -> None:
+        """Aggiorna il box informativo dell'attività selezionata."""
+        if not hasattr(self, 'activity_info_text') or not self.selected_activity_id:
+            return
+        
+        activity = self.db.get_activity(self.selected_activity_id)
+        if not activity:
+            self.clear_activity_info_box()
+            return
+        
+        self.activity_info_text.configure(state="normal")
+        self.activity_info_text.delete("1.0", "end")
+        
+        info = f"⚙️ Nome: {activity['name']}\n"
+        info += f"💵 Tariffa oraria: €{activity['hourly_rate']:.2f}/h\n"
+        
+        notes = activity.get('notes', '').strip()
+        if notes:
+            info += f"📄 Note: {notes}\n"
+        
+        # Cerca la pianificazione
+        schedules = self.db.list_schedules()
+        activity_schedule = next((s for s in schedules if s["project_id"] == self.selected_project_id and s["activity_id"] == self.selected_activity_id), None)
+        
+        if activity_schedule:
+            info += f"📅 Inizio: {datetime.strptime(activity_schedule['start_date'], '%Y-%m-%d').strftime('%d/%m/%Y')}\n"
+            info += f"📅 Fine: {datetime.strptime(activity_schedule['end_date'], '%Y-%m-%d').strftime('%d/%m/%Y')}\n"
+            info += f"⏱️ Ore pianificate: {activity_schedule['planned_hours']:.1f}\n"
+            info += f"💰 Budget: €{activity_schedule.get('budget', 0):.2f}"
+        else:
+            info += "⚠️ Nessuna pianificazione impostata"
+        
+        self.activity_info_text.insert("1.0", info)
+        self.activity_info_text.configure(state="disabled")
+        
+        # Carica gli utenti e l'utente assegnato
+        self.load_activity_users()
+    
+    def clear_activity_info_box(self) -> None:
+        """Pulisce il box informativo dell'attività."""
+        if hasattr(self, 'activity_info_text'):
+            self.activity_info_text.configure(state="normal")
+            self.activity_info_text.delete("1.0", "end")
+            self.activity_info_text.insert("1.0", "Nessuna attività selezionata")
+            self.activity_info_text.configure(state="disabled")
+        
+        if hasattr(self, 'activity_users_listbox'):
+            self.activity_users_listbox.delete(0, tk.END)
+    
+    def load_activity_users(self) -> None:
+        """Carica la lista degli utenti assegnati all'attività selezionata."""
+        if not hasattr(self, 'activity_users_listbox'):
+            return
+        
+        # Pulisci la listbox
+        self.activity_users_listbox.delete(0, tk.END)
+        
+        # Carica gli utenti assegnati (se presente)
+        if self.selected_project_id and self.selected_activity_id:
+            assignments = self.db.get_user_project_assignments(self.selected_project_id)
+            # Filtra solo le assegnazioni specifiche a questa attività
+            assigned_users = [a for a in assignments if a.get("activity_id") is not None and a.get("activity_id") == self.selected_activity_id]
+            
+            for user in assigned_users:
+                display_name = f"{user['full_name']} ({user['username']})"
+                self.activity_users_listbox.insert(tk.END, display_name)
+    
+    def add_user_to_activity(self) -> None:
+        """Apre una finestra per aggiungere un utente all'attività."""
+        if not self.selected_project_id or not self.selected_activity_id:
+            messagebox.showwarning("Assegnazione", "Seleziona prima un'attività.")
+            return
+        
+        # Finestra di selezione utente
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("Aggiungi Utente")
+        dialog.geometry("400x300")
+        dialog.transient(self)
+        dialog.grab_set()
+        
+        ctk.CTkLabel(dialog, text="Seleziona utente da aggiungere:", font=ctk.CTkFont(weight="bold")).pack(padx=20, pady=(20, 10))
+        
+        # Lista utenti disponibili
+        users = self.db.list_users()
+        assignments = self.db.get_user_project_assignments(self.selected_project_id)
+        # Filtra solo le assegnazioni specifiche a questa attività
+        assigned_user_ids = [a['user_id'] for a in assignments if a.get("activity_id") is not None and a.get("activity_id") == self.selected_activity_id]
+        
+        available_users = [u for u in users if u['id'] not in assigned_user_ids]
+        
+        if not available_users:
+            messagebox.showinfo("Assegnazione", "Tutti gli utenti sono già assegnati a questa attività.")
+            dialog.destroy()
+            return
+        
+        user_listbox = tk.Listbox(dialog, height=10, font=("Arial", 12))
+        user_listbox.pack(fill="both", expand=True, padx=20, pady=10)
+        
+        user_map = {}
+        for user in available_users:
+            display = f"{user['full_name']} ({user['username']})"
+            user_listbox.insert(tk.END, display)
+            user_map[user_listbox.size() - 1] = user['id']
+        
+        def confirm_add():
+            selection = user_listbox.curselection()
+            if not selection:
+                messagebox.showwarning("Selezione", "Seleziona un utente.")
+                return
+            
+            user_id = user_map[selection[0]]
+            self.db.add_user_project_assignment(user_id, self.selected_project_id, self.selected_activity_id)
+            self.load_activity_users()
+            dialog.destroy()
+            messagebox.showinfo("Assegnazione", "Utente aggiunto con successo.")
+        
+        ctk.CTkButton(dialog, text="Aggiungi", command=confirm_add).pack(pady=(0, 20))
+    
+    def remove_user_from_activity(self) -> None:
+        """Rimuove l'utente selezionato dall'attività."""
+        if not self.selected_project_id or not self.selected_activity_id:
+            return
+        
+        if not hasattr(self, 'activity_users_listbox'):
+            return
+        
+        selection = self.activity_users_listbox.curselection()
+        if not selection:
+            messagebox.showwarning("Rimozione", "Seleziona un utente da rimuovere.")
+            return
+        
+        # Ottieni l'utente dalla listbox
+        selected_text = self.activity_users_listbox.get(selection[0])
+        
+        # Trova l'user_id corrispondente
+        assignments = self.db.get_user_project_assignments(self.selected_project_id)
+        # Filtra solo le assegnazioni specifiche a questa attività
+        assigned_users = [a for a in assignments if a.get("activity_id") is not None and a.get("activity_id") == self.selected_activity_id]
+        
+        selected_user = None
+        for user in assigned_users:
+            display_name = f"{user['full_name']} ({user['username']})"
+            if display_name == selected_text:
+                selected_user = user
                 break
         
-        if not project_id:
-            messagebox.showerror("Gestione Commesse", "Impossibile trovare la commessa associata.")
+        if not selected_user:
+            messagebox.showerror("Errore", "Impossibile identificare l'utente selezionato.")
             return
         
-        try:
-            name = self.pm_activity_name_entry.get().strip()
-            if not name:
-                raise ValueError("Nome attività obbligatorio.")
-            
-            if self.is_admin and hasattr(self, 'pm_activity_rate_entry'):
-                rate = self._to_float(self.pm_activity_rate_entry.get().strip() or "0", "Costo attività")
-            else:
-                rate = 0.0
-            
-            notes = self.pm_activity_notes_entry.get().strip()
-            self.db.update_activity(self.selected_activity_id, name, rate, notes)
-            
-            # Gestione pianificazione - aggiorna/crea schedule solo se ci sono TUTTI i dati necessari
-            start_date_str = self.pm_activity_start_entry.get().strip()
-            end_date_str = self.pm_activity_end_entry.get().strip()
-            hours_str = self.pm_activity_hours_entry.get().strip()
-            budget_str = self.pm_activity_budget_entry.get().strip()
-            
-            if start_date_str and end_date_str and hours_str:
-                # Tutti i dati necessari presenti, gestisci lo schedule
-                start_date = datetime.strptime(start_date_str, "%d/%m/%Y").strftime("%Y-%m-%d")
-                end_date = datetime.strptime(end_date_str, "%d/%m/%Y").strftime("%Y-%m-%d")
-                
-                if start_date > end_date:
-                    raise ValueError("La data di inizio deve essere precedente alla data di fine.")
-                
-                planned_hours = self._to_float(hours_str, "Ore preventivate")
-                if planned_hours <= 0:
-                    raise ValueError("Ore preventivate: il valore deve essere > 0.")
-                
-                budget = self._to_float(budget_str, "Budget") if budget_str else 0.0
-                
-                # Cerca schedule esistente per questa attività
-                schedules = self.db.list_schedules()
-                existing_schedule = None
-                for sched in schedules:
-                    if sched["project_id"] == project_id and sched["activity_id"] == self.selected_activity_id:
-                        existing_schedule = sched
-                        break
-                
-                if existing_schedule:
-                    self.db.update_schedule(existing_schedule["id"], project_id, self.selected_activity_id, 
-                                          start_date, end_date, planned_hours, "", budget)
-                else:
-                    self.db.add_schedule(project_id, self.selected_activity_id, start_date, end_date, planned_hours, "", budget)
-            elif not start_date_str and not end_date_str and not hours_str:
-                # Nessun dato di pianificazione, elimina schedule se esiste
-                schedules = self.db.list_schedules()
-                for sched in schedules:
-                    if sched["project_id"] == project_id and sched["activity_id"] == self.selected_activity_id:
-                        self.db.delete_schedule(sched["id"])
-                        break
-            
-            messagebox.showinfo("Gestione Commesse", "Attività modificata con successo.")
-            
-        except ValueError as exc:
-            messagebox.showerror("Gestione Commesse", str(exc))
-            return
-        except sqlite3.IntegrityError as exc:
-            if "UNIQUE constraint" in str(exc):
-                messagebox.showerror("Gestione Commesse", f"Esiste già un'attività con questo nome per questa commessa.\nScegli un nome diverso.")
-            else:
-                messagebox.showerror("Gestione Commesse", f"Errore database: {exc}")
+        if messagebox.askyesno("Conferma", f"Rimuovere {selected_user['full_name']} dall'attività?"):
+            # Rimuovi l'assegnazione specifica
+            self.db.conn.execute(
+                "DELETE FROM user_project_assignments WHERE user_id = ? AND project_id = ? AND activity_id = ?",
+                (selected_user['user_id'], self.selected_project_id, self.selected_activity_id)
+            )
+            self.db.conn.commit()
+            self.load_activity_users()
+            messagebox.showinfo("Rimozione", "Utente rimosso con successo.")
+    
+    def pm_new_project(self) -> None:
+        """Crea una nuova commessa. Richiede la selezione di un cliente."""
+        client_id = self._id_from_option(self.pm_client_combo.get())
+        if not client_id:
+            messagebox.showinfo("Gestione Commesse", "Seleziona prima un cliente.")
             return
         
-        # Pulisci i campi
-        self.pm_activity_name_entry.delete(0, "end")
-        if self.is_admin and hasattr(self, 'pm_activity_rate_entry'):
-            self.pm_activity_rate_entry.delete(0, "end")
-        self.pm_activity_notes_entry.delete(0, "end")
-        self.pm_activity_start_entry.delete(0, "end")
-        self.pm_activity_end_entry.delete(0, "end")
-        self.pm_activity_hours_entry.delete(0, "end")
-        self.pm_activity_budget_entry.delete(0, "end")
+        # Resetta selected_project_id per indicare creazione nuova
+        self.selected_project_id = None
+        self.open_project_management()
+        
+        # Dopo la chiusura della finestra, ricarica
+        self.refresh_projects_tree()
+    
+    def pm_edit_project(self) -> None:
+        """Modifica la commessa selezionata."""
+        if not self.selected_project_id:
+            messagebox.showinfo("Gestione Commesse", "Seleziona una commessa dall'elenco.")
+            return
+        
+        self.open_project_management()
+        
+        # Dopo la chiusura della finestra, ricarica
+        self.refresh_projects_tree()
+        self.refresh_activities_tree()
+    
+    def pm_new_activity(self) -> None:
+        """Apre finestra per creare una nuova attività."""
+        if not self.selected_project_id:
+            messagebox.showinfo("Gestione Attività", "Seleziona prima una commessa dall'elenco.")
+            return
+        
+        # Resetta selected_activity_id per indicare creazione nuova
         self.selected_activity_id = None
+        self.open_activity_management()
         
-        # Ricarica attività e verifica budget
-        self.refresh_project_activities_tree()
-        self.on_pm_project_change(self.pm_project_combo.get())
-        if hasattr(self, 'refresh_control_panel'):
-            self.refresh_control_panel()
+        # Dopo la chiusura della finestra, ricarica
+        self.refresh_activities_tree()
     
-    def pm_delete_activity(self) -> None:
-        """Elimina l'attività selezionata."""
+    def pm_edit_activity_window(self) -> None:
+        """Apre finestra per modificare l'attività selezionata."""
         if not self.selected_activity_id:
-            messagebox.showinfo("Gestione Commesse", "Seleziona un'attività dall'elenco.")
+            messagebox.showinfo("Gestione Attività", "Seleziona un'attività dall'elenco.")
             return
         
-        if not messagebox.askyesno("Conferma", "Eliminare l'attività selezionata? Verranno eliminati anche i timesheet associati."):
-            return
+        self.open_activity_management()
         
-        try:
-            self.db.delete_activity(self.selected_activity_id)
-            messagebox.showinfo("Gestione Commesse", "Attività eliminata.")
-            
-            # Pulisci i campi
-            self.pm_activity_name_entry.delete(0, "end")
-            if self.is_admin and hasattr(self, 'pm_activity_rate_entry'):
-                self.pm_activity_rate_entry.delete(0, "end")
-            self.pm_activity_notes_entry.delete(0, "end")
-            self.pm_activity_start_entry.delete(0, "end")
-            self.pm_activity_end_entry.delete(0, "end")
-            self.pm_activity_hours_entry.delete(0, "end")
-            self.pm_activity_budget_entry.delete(0, "end")
-            self.selected_activity_id = None
-            
-            # Ricarica attività e verifica budget
-            self.refresh_project_activities_tree()
-            self.on_pm_project_change(self.pm_project_combo.get())
-            if hasattr(self, 'refresh_control_panel'):
-                self.refresh_control_panel()
-                
-        except Exception as exc:
-            messagebox.showerror("Gestione Commesse", f"Errore: {exc}")
+        # Dopo la chiusura della finestra, ricarica
+        self.refresh_activities_tree()
     
-    def on_pm_tree_select(self, _event: tk.Event) -> None:
-        """Popola i campi quando viene selezionato un elemento nell'albero."""
-        selected = self.master_tree.selection()
-        if not selected:
-            return
+    def open_activity_management(self) -> None:
+        """Apre finestra popup per gestione completa dell'attività (nuova o esistente)."""
+        is_new = not self.selected_activity_id
         
-        item = selected[0]
-        tags = self.master_tree.item(item, "tags")
-        
-        # Se è un'attività
-        if tags and tags[0].startswith("activity_"):
-            activity_id = int(tags[0].replace("activity_", ""))
-            self.selected_activity_id = activity_id
-            activities = self.db.list_activities()
+        if is_new:
+            # Modalità creazione
+            if not self.selected_project_id:
+                messagebox.showinfo("Gestione Attività", "Seleziona prima una commessa.")
+                return
             
-            for activity in activities:
-                if activity["id"] == activity_id:
-                    self.pm_activity_name_entry.delete(0, "end")
-                    self.pm_activity_name_entry.insert(0, activity["name"])
-                    
-                    if self.is_admin and hasattr(self, 'pm_activity_rate_entry'):
-                        self.pm_activity_rate_entry.delete(0, "end")
-                        self.pm_activity_rate_entry.insert(0, str(activity["hourly_rate"]))
-                    
-                    self.pm_activity_notes_entry.delete(0, "end")
-                    self.pm_activity_notes_entry.insert(0, activity.get("notes", ""))
-                    
-                    # Carica pianificazione se esiste
-                    schedules = self.db.list_schedules()
-                    for sched in schedules:
-                        if sched["project_id"] == activity["project_id"] and sched["activity_id"] == activity_id:
-                            start_date = datetime.strptime(sched["start_date"], "%Y-%m-%d").strftime("%d/%m/%Y")
-                            end_date = datetime.strptime(sched["end_date"], "%Y-%m-%d").strftime("%d/%m/%Y")
-                            
-                            self.pm_activity_start_entry.delete(0, "end")
-                            self.pm_activity_start_entry.insert(0, start_date)
-                            self.pm_activity_end_entry.delete(0, "end")
-                            self.pm_activity_end_entry.insert(0, end_date)
-                            self.pm_activity_hours_entry.delete(0, "end")
-                            self.pm_activity_hours_entry.insert(0, str(sched["planned_hours"]))
-                            self.pm_activity_budget_entry.delete(0, "end")
-                            self.pm_activity_budget_entry.insert(0, str(sched.get("budget", 0)))
-                            break
-                    else:
-                        # Nessuna pianificazione, pulisci i campi date
-                        self.pm_activity_start_entry.delete(0, "end")
-                        self.pm_activity_end_entry.delete(0, "end")
-                        self.pm_activity_hours_entry.delete(0, "end")
-                        self.pm_activity_budget_entry.delete(0, "end")
-                    break
+            activity = {
+                "name": "",
+                "hourly_rate": 0.0,
+                "notes": "",
+                "project_id": self.selected_project_id
+            }
+            activity_schedule = None
         else:
-            # Non è un'attività, pulisci la selezione
-            self.selected_activity_id = None
+            # Modalità modifica: carica dati attività esistente
+            activities = self.db.list_activities()
+            activity = next((a for a in activities if a["id"] == self.selected_activity_id), None)
+            
+            if not activity:
+                messagebox.showerror("Gestione Attività", "Attività non trovata.")
+                return
+            
+            # Carica pianificazione esistente - usa activity["id"] per sicurezza
+            schedules = self.db.list_schedules()
+            activity_schedule = next((s for s in schedules if s["project_id"] == activity["project_id"] and s["activity_id"] == activity["id"]), None)
+        
+        # Ottieni il nome della commessa e del cliente
+        projects = self.db.list_projects()
+        project = next((p for p in projects if p["id"] == activity["project_id"]), None)
+        project_info = ""
+        is_project_closed = False
+        if project:
+            project_info = f"{project.get('client_name', '')} / {project['name']}"
+            # Verifica se la schedule del progetto è chiusa o se il campo closed è 1
+            schedules = self.db.list_schedules()
+            project_schedule = next((s for s in schedules if s["project_id"] == project["id"] and s["activity_id"] is None), None)
+            if project_schedule:
+                is_project_closed = project_schedule.get("status", "aperta") == "chiusa"
+            else:
+                is_project_closed = project.get("closed", 0) == 1
+        
+        popup = ctk.CTkToplevel(self)
+        if is_new:
+            popup.title("Nuova Attività")
+        else:
+            popup.title(f"Gestione Attività: {activity['name']}")
+        popup.geometry("700x550")
+        popup.transient(self)
+        popup.grab_set()
+        
+        # Frame con scrollbar
+        main_scroll_frame = ctk.CTkScrollableFrame(popup)
+        main_scroll_frame.pack(fill="both", expand=True, padx=10, pady=10)
+        
+        # Form modifica dati attività
+        form_frame = ctk.CTkFrame(main_scroll_frame)
+        form_frame.pack(fill="x", pady=(0, 10))
+        form_frame.grid_columnconfigure(1, weight=1)
+        
+        # Mostra commessa
+        ctk.CTkLabel(form_frame, text="Commessa:", font=ctk.CTkFont(weight="bold")).grid(
+            row=0, column=0, padx=5, pady=5, sticky="w"
+        )
+        ctk.CTkLabel(form_frame, text=project_info, font=ctk.CTkFont(size=12)).grid(
+            row=0, column=1, columnspan=3, padx=5, pady=5, sticky="w"
+        )
+        
+        ctk.CTkLabel(form_frame, text="Nome attività:", font=ctk.CTkFont(weight="bold")).grid(
+            row=1, column=0, padx=5, pady=5, sticky="w"
+        )
+        activity_name_entry = ctk.CTkEntry(form_frame, placeholder_text="Inserisci nome attività")
+        activity_name_entry.insert(0, activity["name"])
+        activity_name_entry.grid(row=1, column=1, columnspan=3, padx=5, pady=5, sticky="ew")
+        
+        ctk.CTkLabel(form_frame, text="Tariffa oraria (€/h):", font=ctk.CTkFont(weight="bold")).grid(
+            row=2, column=0, padx=5, pady=5, sticky="w"
+        )
+        activity_rate_entry = ctk.CTkEntry(form_frame, width=120)
+        activity_rate_entry.insert(0, str(activity["hourly_rate"]))
+        activity_rate_entry.grid(row=2, column=1, padx=5, pady=5, sticky="w")
+        
+        ctk.CTkLabel(form_frame, text="Note:").grid(row=3, column=0, padx=5, pady=5, sticky="w")
+        activity_notes_entry = ctk.CTkEntry(form_frame)
+        activity_notes_entry.insert(0, activity.get("notes", ""))
+        activity_notes_entry.grid(row=3, column=1, columnspan=3, padx=5, pady=5, sticky="ew")
+        
+        # Pianificazione
+        ctk.CTkLabel(form_frame, text="Pianificazione", font=ctk.CTkFont(size=12, weight="bold")).grid(
+            row=4, column=0, columnspan=4, padx=5, pady=(15, 5), sticky="w"
+        )
+        
+        ctk.CTkLabel(form_frame, text="Data inizio:").grid(row=5, column=0, padx=5, pady=5, sticky="w")
+        activity_start_entry = ctk.CTkEntry(form_frame, placeholder_text="gg/mm/aaaa", width=120)
+        activity_start_entry.grid(row=5, column=1, padx=5, pady=5, sticky="w")
+        self.setup_date_entry_helpers(activity_start_entry)
+        
+        ctk.CTkLabel(form_frame, text="Data fine:").grid(row=5, column=2, padx=5, pady=5, sticky="w")
+        activity_end_entry = ctk.CTkEntry(form_frame, placeholder_text="gg/mm/aaaa", width=120)
+        activity_end_entry.grid(row=5, column=3, padx=5, pady=5, sticky="w")
+        self.setup_date_entry_helpers(activity_end_entry)
+        
+        ctk.CTkLabel(form_frame, text="Ore preventivate:").grid(row=6, column=0, padx=5, pady=5, sticky="w")
+        activity_hours_entry = ctk.CTkEntry(form_frame, width=120)
+        activity_hours_entry.grid(row=6, column=1, padx=5, pady=5, sticky="w")
+        
+        ctk.CTkLabel(form_frame, text="Budget (€):").grid(row=6, column=2, padx=5, pady=5, sticky="w")
+        activity_budget_entry = ctk.CTkEntry(form_frame, width=120)
+        activity_budget_entry.grid(row=6, column=3, padx=5, pady=5, sticky="w")
+        
+        # Carica pianificazione esistente (solo se modifica)
+        if activity_schedule:
+            start = datetime.strptime(activity_schedule["start_date"], "%Y-%m-%d").strftime("%d/%m/%Y")
+            end = datetime.strptime(activity_schedule["end_date"], "%Y-%m-%d").strftime("%d/%m/%Y")
+            activity_start_entry.insert(0, start)
+            activity_end_entry.insert(0, end)
+            activity_hours_entry.insert(0, str(activity_schedule["planned_hours"]))
+            activity_budget_entry.insert(0, str(activity_schedule.get("budget", 0)))
+        elif is_new and project_schedule:
+            # Nuova attività: pre-compila le date dalla commessa (se presente)
+            start = datetime.strptime(project_schedule["start_date"], "%Y-%m-%d").strftime("%d/%m/%Y")
+            end = datetime.strptime(project_schedule["end_date"], "%Y-%m-%d").strftime("%d/%m/%Y")
+            activity_start_entry.insert(0, start)
+            activity_end_entry.insert(0, end)
+        
+        # Non disabilitiamo più i campi per commesse chiuse - solo i pulsanti
+        # Questo permette di leggere i valori anche se la commessa è chiusa
+        
+        def save_activity():
+            try:
+                # Salva gli ID corretti all'inizio
+                current_project_id = self.selected_project_id if is_new else activity["project_id"]
+                current_activity_id = None if is_new else activity["id"]
+                
+                name = activity_name_entry.get().strip()
+                if not name:
+                    raise ValueError("Nome attività obbligatorio.")
+                
+                rate = self._to_float(activity_rate_entry.get().strip() or "0", "Tariffa attività")
+                notes = activity_notes_entry.get().strip()
+                
+                # VALIDAZIONE PIANIFICAZIONE PRIMA DI SALVARE L'ATTIVITÀ
+                start_date_str = activity_start_entry.get().strip()
+                end_date_str = activity_end_entry.get().strip()
+                hours_str = activity_hours_entry.get().strip()
+                budget_str = activity_budget_entry.get().strip()
+                
+                # Crea schedule se ci sono date O se ci sono ore/budget
+                has_any_planning = any([start_date_str, end_date_str, hours_str, budget_str])
+                
+                # Variabili per schedule
+                start_date = None
+                end_date = None
+                planned_hours = 0
+                budget = 0
+                warnings = []
+                
+                if has_any_planning:
+                    # Converti ore e budget (senza validazioni)
+                    planned_hours = self._to_float(hours_str, "Ore preventivate") if hours_str else 0
+                    budget = self._to_float(budget_str, "Budget") if budget_str else 0
+                    
+                    # Gestisci date
+                    if start_date_str and end_date_str:
+                        # Usa le date inserite dall'utente
+                        start_date = datetime.strptime(start_date_str, "%d/%m/%Y").strftime("%Y-%m-%d")
+                        end_date = datetime.strptime(end_date_str, "%d/%m/%Y").strftime("%Y-%m-%d")
+                        
+                        if start_date > end_date:
+                            raise ValueError("La data di inizio deve essere precedente alla data di fine.")
+                    elif project_schedule:
+                        # Usa le date dalla commessa come default
+                        start_date = project_schedule["start_date"]
+                        end_date = project_schedule["end_date"]
+                    else:
+                        # Usa date default dell'anno corrente se non ci sono date della commessa
+                        current_year = datetime.now().year
+                        start_date = f"{current_year}-01-01"
+                        end_date = f"{current_year}-12-31"
+                    
+                    # CONTROLLI RISPETTO AI LIMITI DELLA COMMESSA
+                    schedules = self.db.list_schedules()
+                    project_schedule_check = next((s for s in schedules if s["project_id"] == current_project_id and s["activity_id"] is None), None)
+                    
+                    if project_schedule_check:
+                        project_end_date = project_schedule_check["end_date"]
+                        project_planned_hours = project_schedule_check["planned_hours"]
+                        project_budget = project_schedule_check.get("budget", 0)
+                        
+                        # Verifica data fine attività
+                        if end_date > project_end_date:
+                            warnings.append(f"⚠ Data fine attività ({datetime.strptime(end_date, '%Y-%m-%d').strftime('%d/%m/%Y')}) supera la data fine commessa ({datetime.strptime(project_end_date, '%Y-%m-%d').strftime('%d/%m/%Y')})")
+                        
+                        # Calcola totali attività (esclusa quella corrente se è modifica)
+                        activity_schedules = [s for s in schedules if s["project_id"] == current_project_id and s["activity_id"] is not None]
+                        
+                        total_hours = 0
+                        total_budget = 0
+                        for s in activity_schedules:
+                            # Escludi l'attività corrente se è una modifica
+                            if not is_new and s["activity_id"] == current_activity_id:
+                                continue
+                            total_hours += s.get("planned_hours", 0)
+                            total_budget += s.get("budget", 0)
+                        
+                        # Aggiungi i valori della attività corrente
+                        total_hours += planned_hours
+                        total_budget += budget
+                        
+                        # Verifica ore
+                        if project_planned_hours > 0 and total_hours > project_planned_hours:
+                            warnings.append(f"⚠ Ore totali attività ({total_hours:.1f}h) superano le ore preventivate della commessa ({project_planned_hours:.1f}h)")
+                        
+                        # Verifica budget
+                        if project_budget > 0 and total_budget > project_budget:
+                            warnings.append(f"⚠ Budget totale attività ({total_budget:.2f}€) supera il budget della commessa ({project_budget:.2f}€)")
+                
+                # VALIDAZIONE SUPERATA - ORA SALVA L'ATTIVITÀ
+                if is_new:
+                    # Crea nuova attività
+                    new_activity_id = self.db.add_activity(current_project_id, name, rate, notes)
+                    current_activity_id = new_activity_id
+                    self.selected_activity_id = new_activity_id
+                else:
+                    # Aggiorna attività esistente
+                    self.db.update_activity(current_activity_id, name, rate, notes)
+                
+                # GESTIONE SCHEDULE
+                if has_any_planning:
+                    # Salva schedule
+                    if activity_schedule and not is_new:
+                        self.db.update_schedule(activity_schedule["id"], current_project_id, current_activity_id,
+                                              start_date, end_date, planned_hours, "", budget)
+                    else:
+                        self.db.add_schedule(current_project_id, current_activity_id, start_date, end_date, 
+                                           planned_hours, "", budget)
+                    
+                    # Mostra avvertimenti se presenti
+                    if warnings:
+                        warning_msg = "Attività salvata, ma attenzione:\n\n" + "\n".join(warnings)
+                        messagebox.showwarning("Gestione Attività", warning_msg)
+                    else:
+                        messagebox.showinfo("Gestione Attività", "Attività salvata con successo.")
+                elif not has_any_planning and activity_schedule and not is_new:
+                    # L'utente ha cancellato tutti i dati di pianificazione e c'è uno schedule esistente -> elimina lo schedule
+                    if messagebox.askyesno("Conferma", "Vuoi eliminare la pianificazione di questa attività?"):
+                        self.db.delete_schedule(activity_schedule["id"])
+                        messagebox.showinfo("Gestione Attività", "Attività salvata. Pianificazione eliminata.")
+                    else:
+                        messagebox.showinfo("Gestione Attività", "Attività salvata. Pianificazione mantenuta.")
+                else:
+                    # Nessuna pianificazione e nessuno schedule esistente -> ok
+                    messagebox.showinfo("Gestione Attività", "Attività salvata con successo.")
+                
+                popup.destroy()
+                
+                # Ricarica dati
+                self.refresh_activities_tree()
+                if hasattr(self, 'refresh_control_panel'):
+                    self.refresh_control_panel()
+                
+            except ValueError as exc:
+                messagebox.showerror("Gestione Attività", str(exc))
+            except sqlite3.IntegrityError as exc:
+                if "UNIQUE constraint" in str(exc):
+                    messagebox.showerror("Gestione Attività", "Esiste già un'attività con questo nome per questa commessa.")
+                else:
+                    messagebox.showerror("Gestione Attività", f"Errore database: {exc}")
+            except Exception as exc:
+                import traceback
+                traceback.print_exc()
+                messagebox.showerror("Gestione Attività", f"Errore generico: {exc}")
+        
+        def delete_activity():
+            if is_new:
+                return
+            
+            if not messagebox.askyesno("Conferma", "Eliminare l'attività? Verranno eliminati anche i timesheet associati."):
+                return
+            
+            try:
+                activity_id_to_delete = activity["id"]
+                self.db.delete_activity(activity_id_to_delete)
+                messagebox.showinfo("Gestione Attività", "Attività eliminata.")
+                popup.destroy()
+                
+                self.selected_activity_id = None
+                self.refresh_activities_tree()
+                if hasattr(self, 'refresh_control_panel'):
+                    self.refresh_control_panel()
+            except Exception as exc:
+                messagebox.showerror("Gestione Attività", f"Errore: {exc}")
+        
+        # Pulsanti
+        btn_frame = ctk.CTkFrame(form_frame, fg_color="transparent")
+        btn_frame.grid(row=7, column=0, columnspan=4, pady=20)
+        
+        save_btn = ctk.CTkButton(btn_frame, text="Salva", command=save_activity, width=120)
+        save_btn.pack(side="left", padx=5)
+        if is_project_closed:
+            save_btn.configure(state="disabled")
+        
+        if not is_new:
+            delete_btn = ctk.CTkButton(btn_frame, text="Elimina Attività", command=delete_activity, width=120, 
+                         fg_color="#D32F2F")
+            delete_btn.pack(side="left", padx=5)
+            if is_project_closed:
+                delete_btn.configure(state="disabled")
+        
+        ctk.CTkButton(btn_frame, text="Annulla", command=popup.destroy, width=120).pack(side="left", padx=5)
+    
+    # ========== FUNZIONI VECCHIE DA RIMUOVERE O ADATTARE ==========
+    
+    def on_pm_project_change(self, _value: str) -> None:
+        """Funzione legacy - non più utilizzata nel nuovo layout."""
+        pass
+    
+    def refresh_user_checkboxes(self) -> None:
+        """Funzione legacy - non più utilizzata nel nuovo layout."""
+        pass
+    
+    def on_user_assignment_toggle(self, user_id: int, var: tk.BooleanVar) -> None:
+        """Funzione legacy - non più utilizzata nel nuovo layout."""
+        pass
     
     def open_clients_management(self) -> None:
         """Apre finestra popup per gestione completa clienti."""
@@ -1854,6 +2334,9 @@ class TimesheetApp(ctk.CTk):
         
         def save_project():
             try:
+                # Salva il project_id corretto all'inizio (in caso di modifica)
+                current_project_id = self.selected_project_id if is_new else project["id"]
+                
                 name = project_name_entry.get().strip()
                 if not name:
                     raise ValueError("Nome commessa obbligatorio.")
@@ -1867,57 +2350,74 @@ class TimesheetApp(ctk.CTk):
                 referente_commessa = project_referente_entry.get().strip()
                 descrizione_commessa = project_desc_text.get("1.0", "end-1c").strip()
                 
-                if is_new:
-                    # Crea nuova commessa
-                    new_project_id = self.db.add_project(client_id, name, rate, notes, referente_commessa, descrizione_commessa)
-                    self.selected_project_id = new_project_id
-                else:
-                    # Aggiorna commessa esistente
-                    self.db.update_project(self.selected_project_id, name, rate, notes, referente_commessa, descrizione_commessa)
-                
-                # Gestione pianificazione - aggiorna/crea schedule solo se ci sono TUTTI i dati necessari
+                # VALIDAZIONE PIANIFICAZIONE PRIMA DI SALVARE LA COMMESSA
                 start_date_str = project_start_entry.get().strip()
                 end_date_str = project_end_entry.get().strip()
                 hours_str = project_hours_entry.get().strip()
                 budget_str = project_budget_entry.get().strip()
                 
-                if start_date_str and end_date_str and hours_str:
-                    # Tutti i dati necessari presenti, gestisci lo schedule
-                    start_date = datetime.strptime(start_date_str, "%d/%m/%Y").strftime("%Y-%m-%d")
-                    end_date = datetime.strptime(end_date_str, "%d/%m/%Y").strftime("%Y-%m-%d")
+                # Crea schedule se ci sono date O se ci sono ore/budget
+                has_any_planning = any([start_date_str, end_date_str, hours_str, budget_str])
+                
+                # Variabili per schedule
+                start_date = None
+                end_date = None
+                planned_hours = 0
+                budget = 0
+                
+                if has_any_planning:
+                    # Converti ore e budget (senza validazioni)
+                    planned_hours = self._to_float(hours_str, "Ore preventivate") if hours_str else 0
+                    budget = self._to_float(budget_str, "Budget") if budget_str else 0
                     
-                    if start_date > end_date:
-                        raise ValueError("La data di inizio deve essere precedente alla data di fine.")
-                    
-                    planned_hours = self._to_float(hours_str, "Ore preventivate")
-                    if planned_hours <= 0:
-                        raise ValueError("Ore preventivate: il valore deve essere > 0.")
-                    
-                    budget = self._to_float(budget_str, "Budget") if budget_str else 0.0
-                    
+                    # Gestisci date
+                    if start_date_str and end_date_str:
+                        # Usa le date inserite dall'utente
+                        start_date = datetime.strptime(start_date_str, "%d/%m/%Y").strftime("%Y-%m-%d")
+                        end_date = datetime.strptime(end_date_str, "%d/%m/%Y").strftime("%Y-%m-%d")
+                        
+                        if start_date > end_date:
+                            raise ValueError("La data di inizio deve essere precedente alla data di fine.")
+                    else:
+                        # Usa date default dell'anno corrente
+                        current_year = datetime.now().year
+                        start_date = f"{current_year}-01-01"
+                        end_date = f"{current_year}-12-31"
+                
+                # VALIDAZIONE SUPERATA - ORA SALVA LA COMMESSA
+                if is_new:
+                    # Crea nuova commessa
+                    new_project_id = self.db.add_project(client_id, name, rate, notes, referente_commessa, descrizione_commessa)
+                    current_project_id = new_project_id
+                    self.selected_project_id = new_project_id
+                else:
+                    # Aggiorna commessa esistente
+                    self.db.update_project(current_project_id, name, rate, notes, referente_commessa, descrizione_commessa)
+                
+                # GESTIONE SCHEDULE
+                if has_any_planning:
+                    # Salva schedule
                     if project_schedule and not is_new:
-                        self.db.update_schedule(project_schedule["id"], self.selected_project_id, None,
+                        self.db.update_schedule(project_schedule["id"], current_project_id, None,
                                               start_date, end_date, planned_hours, "", budget)
                     else:
-                        self.db.add_schedule(self.selected_project_id, None, start_date, end_date, planned_hours, "", budget)
-                elif not start_date_str and not end_date_str and not hours_str and project_schedule and not is_new:
-                    # Nessun dato di pianificazione e c'era uno schedule, eliminalo
-                    self.db.delete_schedule(project_schedule["id"])
+                        self.db.add_schedule(current_project_id, None, start_date, end_date, planned_hours, "", budget)
+                elif not has_any_planning and project_schedule and not is_new:
+                    # L'utente ha cancellato tutti i dati di pianificazione e c'è uno schedule esistente -> elimina lo schedule
+                    if messagebox.askyesno("Conferma", "Vuoi eliminare la pianificazione di questa commessa?"):
+                        self.db.delete_schedule(project_schedule["id"])
                 
                 if is_new:
                     messagebox.showinfo("Gestione Commesse", "Nuova commessa creata con successo.")
                 else:
                     messagebox.showinfo("Gestione Commesse", "Commessa aggiornata con successo.")
                 
+                # Aggiorna self.selected_project_id per sincronizzazione
+                self.selected_project_id = current_project_id
+                
                 popup.destroy()
                 self.refresh_master_data()
-                
-                # Seleziona la nuova/modificata commessa
-                projects = self.db.list_projects(client_id)
-                project_option = next((self._project_option(p) for p in projects if p["id"] == self.selected_project_id), None)
-                if project_option:
-                    self.pm_project_combo.set(project_option)
-                    self.on_pm_project_change(project_option)
+                self.refresh_projects_tree()
                 
                 if hasattr(self, 'refresh_control_panel'):
                     self.refresh_control_panel()
@@ -1929,6 +2429,42 @@ class TimesheetApp(ctk.CTk):
                     messagebox.showerror("Gestione Commesse", "Esiste già una commessa con questo nome per questo cliente.\nScegli un nome diverso.")
                 else:
                     messagebox.showerror("Gestione Commesse", f"Errore database: {exc}")
+            except Exception as exc:
+                import traceback
+                traceback.print_exc()
+                messagebox.showerror("Gestione Commesse", f"Errore generico: {exc}")
+        
+        def delete_project():
+            if is_new:
+                return
+            
+            if not messagebox.askyesno("Conferma", "Eliminare la commessa? Verranno eliminati anche attività, pianificazioni e timesheet associati."):
+                return
+            
+            try:
+                project_id_to_delete = project["id"]
+                self.db.delete_project(project_id_to_delete)
+                messagebox.showinfo("Gestione Commesse", "Commessa eliminata.")
+                popup.destroy()
+                
+                self.selected_project_id = None
+                self.selected_activity_id = None
+                self.refresh_master_data()
+                if hasattr(self, 'refresh_control_panel'):
+                    self.refresh_control_panel()
+            except Exception as exc:
+                messagebox.showerror("Gestione Commesse", f"Errore: {exc}")
+        
+        # Verifica chiusura: se ha schedule usa il suo status, altrimenti usa campo closed
+        is_closed = False
+        if not is_new:
+            if project_schedule:
+                is_closed = project_schedule.get("status", "aperta") == "chiusa"
+            else:
+                is_closed = project.get("closed", 0) == 1
+        
+        # Non disabilitiamo più i campi - solo i pulsanti saranno disabilitati
+        # Questo permette di leggere i valori dei campi anche quando la commessa è chiusa
         
         # Pulsanti
         btn_frame = ctk.CTkFrame(main_scroll_frame, fg_color="transparent")
@@ -1937,8 +2473,69 @@ class TimesheetApp(ctk.CTk):
         if is_new:
             ctk.CTkButton(btn_frame, text="Crea Commessa", command=save_project, width=150).pack(side="left", padx=5)
         else:
-            ctk.CTkButton(btn_frame, text="Salva Modifiche", command=save_project, width=150).pack(side="left", padx=5)
-        ctk.CTkButton(btn_frame, text="Chiudi", command=popup.destroy, width=100).pack(side="left", padx=5)
+            # Salva modifiche abilitato solo se aperta
+            save_btn = ctk.CTkButton(btn_frame, text="Salva Modifiche", command=save_project, width=150)
+            save_btn.pack(side="left", padx=5)
+            if is_closed:
+                save_btn.configure(state="disabled")
+            
+            delete_btn = ctk.CTkButton(btn_frame, text="🗑️ Elimina Commessa", command=delete_project, width=150, 
+                         fg_color="#D32F2F")
+            delete_btn.pack(side="left", padx=5)
+            if is_closed:
+                delete_btn.configure(state="disabled")
+            
+            # Definisco le funzioni close/open DOPO aver creato i pulsanti
+            def close_project_action():
+                try:
+                    project_id_to_close = project["id"]
+                    self.db.close_project(project_id_to_close)
+                    messagebox.showinfo("Gestione Commesse", "Commessa chiusa con successo.")
+                    
+                    # Aggiorna pulsanti senza disabilitare i campi
+                    save_btn.configure(state="disabled")
+                    delete_btn.configure(state="disabled")
+                    close_btn.configure(state="disabled")
+                    open_btn.configure(state="normal")
+                    
+                    self.refresh_master_data()
+                    self.refresh_projects_tree()
+                    if hasattr(self, 'refresh_control_panel'):
+                        self.refresh_control_panel()
+                except Exception as exc:
+                    messagebox.showerror("Gestione Commesse", f"Errore: {exc}")
+            
+            def open_project_action():
+                try:
+                    project_id_to_open = project["id"]
+                    self.db.open_project(project_id_to_open)
+                    messagebox.showinfo("Gestione Commesse", "Commessa riaperta con successo.")
+                    
+                    # Aggiorna pulsanti senza abilitare i campi
+                    save_btn.configure(state="normal")
+                    delete_btn.configure(state="normal")
+                    close_btn.configure(state="normal")
+                    open_btn.configure(state="disabled")
+                    
+                    self.refresh_master_data()
+                    self.refresh_projects_tree()
+                    if hasattr(self, 'refresh_control_panel'):
+                        self.refresh_control_panel()
+                except Exception as exc:
+                    messagebox.showerror("Gestione Commesse", f"Errore: {exc}")
+            
+            # Pulsanti Chiudi/Apri: abilita solo il relativo
+            close_btn = ctk.CTkButton(btn_frame, text="🔒 Chiudi", command=close_project_action, width=100)
+            close_btn.pack(side="left", padx=5)
+            if is_closed:
+                close_btn.configure(state="disabled")
+            
+            open_btn = ctk.CTkButton(btn_frame, text="🔓 Apri", command=open_project_action, width=100)
+            open_btn.pack(side="left", padx=5)
+            if not is_closed:
+                open_btn.configure(state="disabled")
+        
+        ctk.CTkButton(btn_frame, text="Annulla", command=popup.destroy, width=100).pack(side="left", padx=5)
 
     def add_client(self) -> None:
         # Funzione deprecata - ora si usa open_clients_management
@@ -2003,13 +2600,13 @@ class TimesheetApp(ctk.CTk):
             self.on_timesheet_client_change(self.ts_client_combo.get())
         if hasattr(self, 'plan_project_combo'):
             self.refresh_programming_options()
-        if hasattr(self, 'master_tree'):
-            # Per la nuova tab Project Management, aggiorna solo le attività della commessa selezionata
-            if hasattr(self, 'pm_client_combo'):
-                self.refresh_project_activities_tree()
-            else:
-                # Vecchia visualizzazione gerarchica (se ancora in uso)
-                self.refresh_master_tree()
+        if hasattr(self, 'projects_tree'):
+            # Per la nuova tab Project Management, aggiorna gli elenchi
+            self.refresh_projects_tree()
+            self.refresh_activities_tree()
+        elif hasattr(self, 'master_tree'):
+            # Vecchia visualizzazione gerarchica (se ancora in uso)
+            self.refresh_master_tree()
 
     def refresh_master_tree(self) -> None:
         if not hasattr(self, 'master_tree'):
