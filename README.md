@@ -25,6 +25,16 @@ pip install -r requirements.txt
 python main.py
 ```
 
+## Dati persistenti
+
+- sviluppo: cartella configurazione/dati `TIME-PLANNING\CFG` (workspace del progetto)
+- distribuzione `.exe`: cartella configurazione/dati `CFG` accanto all'eseguibile
+- database principale: `CFG\timesheet.db`
+- backup automatici: `CFG\backups\timesheet_YYYYMMDD_HHMMSS.db`
+
+La cartella viene creata automaticamente al primo avvio.
+L'app crea un backup all'avvio e poi ogni 6 ore, mantenendo gli ultimi 30 file.
+
 ## Build EXE (Windows)
 
 ```powershell

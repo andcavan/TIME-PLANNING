@@ -1,17 +1,78 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import sqlite3
+import shutil
+import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 BASE_DIR = Path(__file__).resolve().parent
-DEFAULT_DB_PATH = BASE_DIR / "timesheet.db"
+APPDATA_APP_DIRNAME = "TIME-PLANNING"
+AUTO_BACKUP_INTERVAL_MINUTES = 360
+AUTO_BACKUP_KEEP_FILES = 30
+
+
+def _runtime_root() -> Path:
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return BASE_DIR
+
+
+def _legacy_appdata_cfg_dir() -> Path:
+    appdata_env = os.getenv("APPDATA")
+    if appdata_env:
+        return Path(appdata_env) / APPDATA_APP_DIRNAME / "CFG"
+    return Path.home() / f".{APPDATA_APP_DIRNAME.lower()}" / "CFG"
+
+
+APP_DIR = _runtime_root()
+CFG_DIR = APP_DIR / "CFG"
+BACKUP_DIR = CFG_DIR / "backups"
+
+
+def _ensure_cfg_file(filename: str) -> Path:
+    CFG_DIR.mkdir(parents=True, exist_ok=True)
+    target = CFG_DIR / filename
+    if target.exists():
+        return target
+
+    legacy_candidates = [
+        BASE_DIR / "CFG" / filename,
+        APP_DIR / "CFG" / filename,
+        BASE_DIR.parent / "CFG" / filename,
+        _legacy_appdata_cfg_dir() / filename,
+        APP_DIR / "_internal" / "CFG" / filename,
+        BASE_DIR / filename,
+        APP_DIR / filename,
+        BASE_DIR.parent / filename,
+        APP_DIR / "_internal" / filename,
+    ]
+
+    seen: set[Path] = set()
+    for legacy in legacy_candidates:
+        if legacy in seen:
+            continue
+        seen.add(legacy)
+        if legacy.exists() and legacy != target:
+            try:
+                shutil.copy2(legacy, target)
+            except OSError:
+                pass
+            if target.exists():
+                break
+    return target
+
+
+DEFAULT_DB_PATH = _ensure_cfg_file("timesheet.db")
 
 
 class Database:
     def __init__(self, db_path: str | Path = DEFAULT_DB_PATH) -> None:
         self.db_path = Path(db_path)
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.conn = sqlite3.connect(self.db_path)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys = ON;")
@@ -20,6 +81,30 @@ class Database:
 
     def close(self) -> None:
         self.conn.close()
+
+    def create_backup(self) -> Path | None:
+        if not self.db_path.exists():
+            return None
+
+        BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_path = BACKUP_DIR / f"{self.db_path.stem}_{timestamp}.db"
+        with sqlite3.connect(backup_path) as backup_conn:
+            self.conn.backup(backup_conn)
+        self._cleanup_backups()
+        return backup_path
+
+    def _cleanup_backups(self, max_files: int = AUTO_BACKUP_KEEP_FILES) -> None:
+        backups = sorted(
+            BACKUP_DIR.glob(f"{self.db_path.stem}_*.db"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        for old_backup in backups[max_files:]:
+            try:
+                old_backup.unlink()
+            except OSError:
+                pass
 
     @staticmethod
     def hash_password(password: str) -> str:
@@ -1846,4 +1931,3 @@ class Database:
             "num_active_schedules": len(schedules),
             "num_at_risk": len(at_risk)
         }
-

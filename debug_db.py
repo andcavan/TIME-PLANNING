@@ -1,7 +1,9 @@
 """Script debug per verificare contenuto database"""
 import sqlite3
 
-conn = sqlite3.connect("timesheet.db")
+from db import DEFAULT_DB_PATH
+
+conn = sqlite3.connect(DEFAULT_DB_PATH)
 conn.row_factory = sqlite3.Row
 cursor = conn.cursor()
 

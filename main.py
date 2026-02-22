@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 
-from db import Database
+from db import AUTO_BACKUP_INTERVAL_MINUTES, Database
 from style import ui_style as mystyle
 from style.ui_ttk import configure_treeview_style
 from pdf_reports import PDFReportGenerator
@@ -25,6 +25,7 @@ class TimesheetApp(ctk.CTk):
     def __init__(self) -> None:
         super().__init__()
         self.db = Database()
+        self.backup_job_id: str | None = None
         self.current_user: dict | None = None
         self.selected_date = date.today()
         self.is_dark_mode = True
@@ -39,6 +40,7 @@ class TimesheetApp(ctk.CTk):
         configure_treeview_style(self, self.palette)
 
         self.build_login_view()
+        self._backup_now_and_schedule()
 
     @property
     def is_admin(self) -> bool:
@@ -98,6 +100,27 @@ class TimesheetApp(ctk.CTk):
     def _get_paned_bg(self) -> str:
         """Restituisce il colore di sfondo appropriato per il PanedWindow in base al tema."""
         return "#2b2b2b" if self.is_dark_mode else "#dbdbdb"
+
+    def _backup_now_and_schedule(self) -> None:
+        try:
+            self.db.create_backup()
+        except Exception as exc:
+            print(f"[backup] Errore creazione backup: {exc}")
+        self._schedule_next_backup()
+
+    def _schedule_next_backup(self) -> None:
+        interval_ms = AUTO_BACKUP_INTERVAL_MINUTES * 60 * 1000
+        self.backup_job_id = self.after(interval_ms, self._run_periodic_backup)
+
+    def _run_periodic_backup(self) -> None:
+        self.backup_job_id = None
+        try:
+            self.db.create_backup()
+        except Exception as exc:
+            print(f"[backup] Errore backup periodico: {exc}")
+        finally:
+            if self.winfo_exists():
+                self._schedule_next_backup()
 
     def build_login_view(self) -> None:
         for child in self.winfo_children():
@@ -3596,6 +3619,12 @@ class TimesheetApp(ctk.CTk):
         ).pack(side="left", padx=5, pady=10)
 
     def on_close(self) -> None:
+        if self.backup_job_id:
+            try:
+                self.after_cancel(self.backup_job_id)
+            except Exception:
+                pass
+            self.backup_job_id = None
         self.db.close()
         self.destroy()
 
