@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 
-from db import AUTO_BACKUP_INTERVAL_MINUTES, Database
+from db import AUTO_BACKUP_INTERVAL_MINUTES, CFG_DIR, Database
 from style import ui_style as mystyle
 from style.ui_ttk import configure_treeview_style
 from pdf_reports import PDFReportGenerator
@@ -148,7 +148,9 @@ class TimesheetApp(ctk.CTk):
         ctk.CTkLabel(self.login_frame, text="Username").grid(row=1, column=0, padx=24, pady=6, sticky="w")
         self.login_username_entry = ctk.CTkEntry(self.login_frame, width=220)
         self.login_username_entry.grid(row=1, column=1, padx=(0, 24), pady=6, sticky="ew")
-        self.login_username_entry.insert(0, "admin")
+        _last_user_file = CFG_DIR / "last_user.txt"
+        _last_user = _last_user_file.read_text(encoding="utf-8").strip() if _last_user_file.exists() else "admin"
+        self.login_username_entry.insert(0, _last_user)
 
         ctk.CTkLabel(self.login_frame, text="Password").grid(row=2, column=0, padx=24, pady=6, sticky="w")
         self.login_password_entry = ctk.CTkEntry(self.login_frame, width=220, show="*")
@@ -298,6 +300,11 @@ class TimesheetApp(ctk.CTk):
             return
 
         self.current_user = user
+        try:
+            CFG_DIR.mkdir(parents=True, exist_ok=True)
+            (CFG_DIR / "last_user.txt").write_text(username, encoding="utf-8")
+        except Exception:
+            pass
         self.unbind("<Return>")
         self.build_main_view()
 

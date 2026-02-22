@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+import sys
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4, landscape
@@ -16,11 +17,21 @@ from reportlab.lib.enums import TA_CENTER, TA_RIGHT, TA_LEFT
 BASE_DIR = Path(__file__).resolve().parent
 
 
+def _runtime_root() -> Path:
+    """Ritorna la cartella dell'eseguibile quando frozen, altrimenti la cartella del sorgente."""
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return BASE_DIR
+
+
+APP_DIR = _runtime_root()
+
+
 class PDFReportGenerator:
     """Generatore di report PDF per TIME-PLANNING."""
     
     def __init__(self, output_dir: Path | str = None):
-        self.output_dir = Path(output_dir) if output_dir else BASE_DIR / "reports"
+        self.output_dir = Path(output_dir) if output_dir else APP_DIR / "reports"
         self.output_dir.mkdir(exist_ok=True)
         self.styles = getSampleStyleSheet()
         self._setup_custom_styles()
