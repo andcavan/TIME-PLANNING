@@ -1,0 +1,26 @@
+# Build output
+dist/
+build/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Database e configurazioni locali
+CFG/*.db
+CFG/backups/
+
+# Report generati
+reports/
+
+# PyInstaller
+*.spec.bak
+
+# VS Code
+.vscode/
+
+# Ambienti virtuali
+venv/
+.env/
