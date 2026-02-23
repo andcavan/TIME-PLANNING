@@ -4,5 +4,11 @@
 			"path": "."
 		}
 	],
-	"settings": {}
+	"settings": {
+		"chat.tools.terminal.autoApprove": {
+			"git remote": true,
+			"git add": true,
+			"git commit": true
+		}
+	}
 }
