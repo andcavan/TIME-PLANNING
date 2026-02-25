@@ -9,6 +9,24 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from db_diary import (
+    count_pending_reminders_impl,
+    create_diary_entry_impl,
+    delete_diary_entry_impl,
+    get_diary_entry_impl,
+    list_diary_entries_impl,
+    toggle_diary_completed_impl,
+    update_diary_entry_impl,
+)
+from db_reports import (
+    get_report_client_data_impl,
+    get_report_filtered_data_impl,
+    get_report_general_data_impl,
+    get_report_period_data_impl,
+    get_report_project_data_impl,
+    get_report_user_data_impl,
+)
+
 BASE_DIR = Path(__file__).resolve().parent
 APPDATA_APP_DIRNAME = "TIME-PLANNING"
 AUTO_BACKUP_INTERVAL_MINUTES = 360
@@ -1674,427 +1692,19 @@ class Database:
     # === Funzioni per Report PDF ===
     
     def get_report_client_data(self, client_id: int, start_date: str | None = None, end_date: str | None = None) -> dict[str, Any]:
-        """Recupera dati per report cliente."""
-        client = self._fetchone("SELECT * FROM clients WHERE id = ?", (client_id,))
-        if not client:
-            return None
-        
-        date_filter = ""
-        params = [client_id]
-        if start_date and end_date:
-            date_filter = " AND s.start_date <= ? AND s.end_date >= ?"
-            params.extend([end_date, start_date])
-        
-        # Programmazioni del cliente
-        schedules = self._fetchall(
-            f"""
-            SELECT s.*, p.name AS project_name, a.name AS activity_name
-            FROM schedules s
-            JOIN projects p ON p.id = s.project_id
-            LEFT JOIN activities a ON a.id = s.activity_id
-            WHERE p.client_id = ? {date_filter}
-            ORDER BY s.start_date DESC
-            """,
-            tuple(params)
-        )
-        
-        # Calcola totali
-        total_planned_hours = 0.0
-        total_budget = 0.0
-        total_actual_hours = 0.0
-        total_actual_cost = 0.0
-        
-        schedule_details = []
-        for sched in schedules:
-            # Ore svolte per questa programmazione
-            if sched["activity_id"]:
-                actual = self._fetchone(
-                    "SELECT COALESCE(SUM(hours), 0) AS hours, COALESCE(SUM(cost), 0) AS cost FROM timesheets WHERE project_id = ? AND activity_id = ? AND work_date >= ? AND work_date <= ?",
-                    (sched["project_id"], sched["activity_id"], sched["start_date"], sched["end_date"])
-                )
-            else:
-                actual = self._fetchone(
-                    "SELECT COALESCE(SUM(hours), 0) AS hours, COALESCE(SUM(cost), 0) AS cost FROM timesheets WHERE project_id = ? AND work_date >= ? AND work_date <= ?",
-                    (sched["project_id"], sched["start_date"], sched["end_date"])
-                )
-            
-            actual_hours = float(actual["hours"]) if actual else 0.0
-            actual_cost = float(actual["cost"]) if actual else 0.0
-            
-            total_planned_hours += float(sched["planned_hours"])
-            total_budget += float(sched.get("budget", 0.0))
-            total_actual_hours += actual_hours
-            total_actual_cost += actual_cost
-            
-            schedule_details.append({
-                "project_name": sched["project_name"],
-                "activity_name": sched["activity_name"] or "(Tutta la commessa)",
-                "start_date": sched["start_date"],
-                "end_date": sched["end_date"],
-                "planned_hours": float(sched["planned_hours"]),
-                "budget": float(sched.get("budget", 0.0)),
-                "actual_hours": actual_hours,
-                "actual_cost": actual_cost,
-            })
-        
-        return {
-            "client": dict(client),
-            "schedules": schedule_details,
-            "total_planned_hours": total_planned_hours,
-            "total_budget": total_budget,
-            "total_actual_hours": total_actual_hours,
-            "total_actual_cost": total_actual_cost
-        }
-    
+        return get_report_client_data_impl(self, client_id, start_date, end_date)
+
     def get_report_project_data(self, project_id: int) -> dict[str, Any]:
-        """Recupera dati per report commessa."""
-        project = self._fetchone(
-            "SELECT p.*, c.name AS client_name FROM projects p JOIN clients c ON c.id = p.client_id WHERE p.id = ?",
-            (project_id,)
-        )
-        if not project:
-            return None
-        
-        # Programmazioni della commessa
-        schedules = self._fetchall(
-            """
-            SELECT s.*, a.name AS activity_name
-            FROM schedules s
-            LEFT JOIN activities a ON a.id = s.activity_id
-            WHERE s.project_id = ?
-            ORDER BY s.start_date DESC
-            """,
-            (project_id,)
-        )
-        
-        # Timesheet della commessa
-        timesheets = self._fetchall(
-            """
-            SELECT t.*, u.username, u.full_name, a.name AS activity_name
-            FROM timesheets t
-            JOIN users u ON u.id = t.user_id
-            JOIN activities a ON a.id = t.activity_id
-            WHERE t.project_id = ?
-            ORDER BY t.work_date DESC
-            """,
-            (project_id,)
-        )
-        
-        # Aggregazione per attività
-        activities_summary = self._fetchall(
-            """
-            SELECT a.name AS activity_name, 
-                   SUM(t.hours) AS total_hours,
-                   SUM(t.cost) AS total_cost
-            FROM timesheets t
-            JOIN activities a ON a.id = t.activity_id
-            WHERE t.project_id = ?
-            GROUP BY a.id
-            ORDER BY total_hours DESC
-            """,
-            (project_id,)
-        )
-        
-        # Aggregazione per utente
-        users_summary = self._fetchall(
-            """
-            SELECT u.username, u.full_name,
-                   SUM(t.hours) AS total_hours,
-                   SUM(t.cost) AS total_cost
-            FROM timesheets t
-            JOIN users u ON u.id = t.user_id
-            WHERE t.project_id = ?
-            GROUP BY u.id
-            ORDER BY total_hours DESC
-            """,
-            (project_id,)
-        )
-        
-        total_planned = sum(float(s["planned_hours"]) for s in schedules)
-        total_budget = sum(float(s.get("budget", 0.0)) for s in schedules)
-        total_actual = sum(float(t["hours"]) for t in timesheets)
-        total_cost = sum(float(t["cost"]) for t in timesheets)
-        
-        return {
-            "project": dict(project),
-            "schedules": schedules,
-            "timesheets": timesheets,
-            "activities_summary": activities_summary,
-            "users_summary": users_summary,
-            "total_planned_hours": total_planned,
-            "total_budget": total_budget,
-            "total_actual_hours": total_actual,
-            "total_actual_cost": total_cost
-        }
-    
+        return get_report_project_data_impl(self, project_id)
+
     def get_report_period_data(self, start_date: str, end_date: str, client_id: int | None = None, project_id: int | None = None) -> dict[str, Any]:
-        """Recupera dati per report periodo."""
-        filters = []
-        params = [start_date, end_date]
-        
-        if client_id:
-            filters.append("p.client_id = ?")
-            params.append(client_id)
-        if project_id:
-            filters.append("t.project_id = ?")
-            params.append(project_id)
-        
-        where_clause = " AND " + " AND ".join(filters) if filters else ""
-        
-        # Timesheet nel periodo
-        timesheets = self._fetchall(
-            f"""
-            SELECT t.*, c.name AS client_name, p.name AS project_name, 
-                   a.name AS activity_name, u.username, u.full_name
-            FROM timesheets t
-            JOIN projects p ON p.id = t.project_id
-            JOIN clients c ON c.id = p.client_id
-            JOIN activities a ON a.id = t.activity_id
-            JOIN users u ON u.id = t.user_id
-            WHERE t.work_date >= ? AND t.work_date <= ? {where_clause}
-            ORDER BY t.work_date DESC
-            """,
-            tuple(params)
-        )
-        
-        # Aggregazione per cliente
-        clients_summary = self._fetchall(
-            f"""
-            SELECT c.name AS client_name,
-                   SUM(t.hours) AS total_hours,
-                   SUM(t.cost) AS total_cost
-            FROM timesheets t
-            JOIN projects p ON p.id = t.project_id
-            JOIN clients c ON c.id = p.client_id
-            WHERE t.work_date >= ? AND t.work_date <= ? {where_clause}
-            GROUP BY c.id
-            ORDER BY total_hours DESC
-            """,
-            tuple(params)
-        )
-        
-        # Aggregazione per commessa
-        projects_summary = self._fetchall(
-            f"""
-            SELECT c.name AS client_name, p.name AS project_name,
-                   SUM(t.hours) AS total_hours,
-                   SUM(t.cost) AS total_cost
-            FROM timesheets t
-            JOIN projects p ON p.id = t.project_id
-            JOIN clients c ON c.id = p.client_id
-            WHERE t.work_date >= ? AND t.work_date <= ? {where_clause}
-            GROUP BY p.id
-            ORDER BY total_hours DESC
-            """,
-            tuple(params)
-        )
-        
-        # Aggregazione per utente
-        users_summary = self._fetchall(
-            f"""
-            SELECT u.username, u.full_name,
-                   SUM(t.hours) AS total_hours,
-                   SUM(t.cost) AS total_cost
-            FROM timesheets t
-            JOIN projects p ON p.id = t.project_id
-            JOIN users u ON u.id = t.user_id
-            WHERE t.work_date >= ? AND t.work_date <= ? {where_clause}
-            GROUP BY u.id
-            ORDER BY total_hours DESC
-            """,
-            tuple(params)
-        )
-        
-        total_hours = sum(float(t["hours"]) for t in timesheets)
-        total_cost = sum(float(t["cost"]) for t in timesheets)
-        
-        return {
-            "start_date": start_date,
-            "end_date": end_date,
-            "timesheets": timesheets,
-            "clients_summary": clients_summary,
-            "projects_summary": projects_summary,
-            "users_summary": users_summary,
-            "total_hours": total_hours,
-            "total_cost": total_cost
-        }
-    
+        return get_report_period_data_impl(self, start_date, end_date, client_id, project_id)
+
     def get_report_user_data(self, user_id: int, start_date: str, end_date: str) -> dict[str, Any]:
-        """Recupera dati per report utente."""
-        user = self._fetchone("SELECT * FROM users WHERE id = ?", (user_id,))
-        if not user:
-            return None
-        
-        # Timesheet dell'utente nel periodo
-        timesheets = self._fetchall(
-            """
-            SELECT t.*, c.name AS client_name, p.name AS project_name, a.name AS activity_name
-            FROM timesheets t
-            JOIN projects p ON p.id = t.project_id
-            JOIN clients c ON c.id = p.client_id
-            JOIN activities a ON a.id = t.activity_id
-            WHERE t.user_id = ? AND t.work_date >= ? AND t.work_date <= ?
-            ORDER BY t.work_date DESC
-            """,
-            (user_id, start_date, end_date)
-        )
-        
-        # Aggregazione per cliente
-        clients_summary = self._fetchall(
-            """
-            SELECT c.name AS client_name,
-                   SUM(t.hours) AS total_hours,
-                   SUM(t.cost) AS total_cost
-            FROM timesheets t
-            JOIN projects p ON p.id = t.project_id
-            JOIN clients c ON c.id = p.client_id
-            WHERE t.user_id = ? AND t.work_date >= ? AND t.work_date <= ?
-            GROUP BY c.id
-            ORDER BY total_hours DESC
-            """,
-            (user_id, start_date, end_date)
-        )
-        
-        # Aggregazione per commessa
-        projects_summary = self._fetchall(
-            """
-            SELECT c.name AS client_name, p.name AS project_name,
-                   SUM(t.hours) AS total_hours,
-                   SUM(t.cost) AS total_cost
-            FROM timesheets t
-            JOIN projects p ON p.id = t.project_id
-            JOIN clients c ON c.id = p.client_id
-            WHERE t.user_id = ? AND t.work_date >= ? AND t.work_date <= ?
-            GROUP BY p.id
-            ORDER BY total_hours DESC
-            """,
-            (user_id, start_date, end_date)
-        )
-        
-        # Aggregazione per attività
-        activities_summary = self._fetchall(
-            """
-            SELECT a.name AS activity_name,
-                   SUM(t.hours) AS total_hours,
-                   SUM(t.cost) AS total_cost
-            FROM timesheets t
-            JOIN activities a ON a.id = t.activity_id
-            WHERE t.user_id = ? AND t.work_date >= ? AND t.work_date <= ?
-            GROUP BY a.id
-            ORDER BY total_hours DESC
-            """,
-            (user_id, start_date, end_date)
-        )
-        
-        total_hours = sum(float(t["hours"]) for t in timesheets)
-        total_cost = sum(float(t["cost"]) for t in timesheets)
-        
-        # Calcola giorni lavorativi
-        work_dates = set(t["work_date"] for t in timesheets)
-        work_days = len(work_dates)
-        avg_hours_per_day = total_hours / work_days if work_days > 0 else 0
-        
-        return {
-            "user": dict(user),
-            "start_date": start_date,
-            "end_date": end_date,
-            "timesheets": timesheets,
-            "clients_summary": clients_summary,
-            "projects_summary": projects_summary,
-            "activities_summary": activities_summary,
-            "total_hours": total_hours,
-            "total_cost": total_cost,
-            "work_days": work_days,
-            "avg_hours_per_day": avg_hours_per_day
-        }
-    
+        return get_report_user_data_impl(self, user_id, start_date, end_date)
+
     def get_report_general_data(self, start_date: str | None = None, end_date: str | None = None) -> dict[str, Any]:
-        """Recupera dati per report generale/riepilogativo."""
-        date_filter = ""
-        params = []
-        
-        if start_date and end_date:
-            date_filter = " WHERE t.work_date >= ? AND t.work_date <= ?"
-            params = [start_date, end_date]
-        
-        # Programmazioni attive
-        schedules = self.get_schedule_control_data()
-        
-        # Totali per cliente
-        clients_summary = self._fetchall(
-            f"""
-            SELECT c.id, c.name AS client_name,
-                   SUM(t.hours) AS total_hours,
-                   SUM(t.cost) AS total_cost
-            FROM timesheets t
-            JOIN projects p ON p.id = t.project_id
-            JOIN clients c ON c.id = p.client_id
-            {date_filter}
-            GROUP BY c.id
-            ORDER BY total_cost DESC
-            """,
-            tuple(params)
-        )
-        
-        # Totali per commessa
-        projects_summary = self._fetchall(
-            f"""
-            SELECT c.name AS client_name, p.name AS project_name,
-                   SUM(t.hours) AS total_hours,
-                   SUM(t.cost) AS total_cost
-            FROM timesheets t
-            JOIN projects p ON p.id = t.project_id
-            JOIN clients c ON c.id = p.client_id
-            {date_filter}
-            GROUP BY p.id
-            ORDER BY total_cost DESC
-            LIMIT 10
-            """,
-            tuple(params)
-        )
-        
-        # Totali per utente
-        users_summary = self._fetchall(
-            f"""
-            SELECT u.username, u.full_name,
-                   SUM(t.hours) AS total_hours,
-                   SUM(t.cost) AS total_cost
-            FROM timesheets t
-            JOIN users u ON u.id = t.user_id
-            {date_filter}
-            GROUP BY u.id
-            ORDER BY total_hours DESC
-            """,
-            tuple(params)
-        )
-        
-        # KPI generali
-        if params:
-            total_hours = self._fetchone(
-                "SELECT COALESCE(SUM(hours), 0) AS hours, COALESCE(SUM(cost), 0) AS cost FROM timesheets WHERE work_date >= ? AND work_date <= ?",
-                tuple(params)
-            )
-        else:
-            total_hours = self._fetchone(
-                "SELECT COALESCE(SUM(hours), 0) AS hours, COALESCE(SUM(cost), 0) AS cost FROM timesheets"
-            )
-        
-        # Programmazioni in ritardo o a rischio
-        at_risk = [s for s in schedules if s["remaining_hours"] < 0 or (s["remaining_days"] < 7 and s["remaining_hours"] > 0)]
-        
-        return {
-            "start_date": start_date,
-            "end_date": end_date,
-            "schedules": schedules,
-            "schedules_at_risk": at_risk,
-            "clients_summary": clients_summary,
-            "projects_summary": projects_summary,
-            "users_summary": users_summary,
-            "total_hours": float(total_hours["hours"]) if total_hours else 0.0,
-            "total_cost": float(total_hours["cost"]) if total_hours else 0.0,
-            "num_active_schedules": len(schedules),
-            "num_at_risk": len(at_risk)
-        }
+        return get_report_general_data_impl(self, start_date, end_date)
 
     def get_report_filtered_data(
         self,
@@ -2105,123 +1715,15 @@ class Database:
         start_date: str | None = None,
         end_date: str | None = None,
     ) -> dict[str, Any]:
-        """Recupera dati per report con filtri flessibili (cliente, commessa, attività, utente, periodo)."""
-        conditions: list[str] = []
-        params: list[Any] = []
-
-        if start_date:
-            conditions.append("t.work_date >= ?")
-            params.append(start_date)
-        if end_date:
-            conditions.append("t.work_date <= ?")
-            params.append(end_date)
-        if client_id:
-            conditions.append("p.client_id = ?")
-            params.append(client_id)
-        if project_id:
-            conditions.append("t.project_id = ?")
-            params.append(project_id)
-        if activity_id:
-            conditions.append("t.activity_id = ?")
-            params.append(activity_id)
-        if user_id:
-            conditions.append("t.user_id = ?")
-            params.append(user_id)
-
-        where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
-        p = tuple(params)
-
-        timesheets = self._fetchall(
-            f"""
-            SELECT t.work_date, t.hours, t.cost, t.note,
-                   c.name AS client_name, p.name AS project_name,
-                   a.name AS activity_name, u.full_name, u.username
-            FROM timesheets t
-            JOIN projects p ON p.id = t.project_id
-            JOIN clients c  ON c.id = p.client_id
-            JOIN activities a ON a.id = t.activity_id
-            JOIN users u ON u.id = t.user_id
-            {where}
-            ORDER BY t.work_date DESC, c.name, p.name, a.name
-            """,
-            p,
+        return get_report_filtered_data_impl(
+            self,
+            client_id=client_id,
+            project_id=project_id,
+            activity_id=activity_id,
+            user_id=user_id,
+            start_date=start_date,
+            end_date=end_date,
         )
-
-        clients_summary = self._fetchall(
-            f"""
-            SELECT c.name AS client_name,
-                   SUM(t.hours) AS total_hours, SUM(t.cost) AS total_cost
-            FROM timesheets t
-            JOIN projects p  ON p.id = t.project_id
-            JOIN clients c   ON c.id = p.client_id
-            JOIN activities a ON a.id = t.activity_id
-            JOIN users u ON u.id = t.user_id
-            {where}
-            GROUP BY c.id ORDER BY total_hours DESC
-            """,
-            p,
-        )
-
-        projects_summary = self._fetchall(
-            f"""
-            SELECT c.name AS client_name, p.name AS project_name,
-                   SUM(t.hours) AS total_hours, SUM(t.cost) AS total_cost
-            FROM timesheets t
-            JOIN projects p  ON p.id = t.project_id
-            JOIN clients c   ON c.id = p.client_id
-            JOIN activities a ON a.id = t.activity_id
-            JOIN users u ON u.id = t.user_id
-            {where}
-            GROUP BY p.id ORDER BY total_hours DESC
-            """,
-            p,
-        )
-
-        activities_summary = self._fetchall(
-            f"""
-            SELECT a.name AS activity_name,
-                   SUM(t.hours) AS total_hours, SUM(t.cost) AS total_cost
-            FROM timesheets t
-            JOIN projects p  ON p.id = t.project_id
-            JOIN clients c   ON c.id = p.client_id
-            JOIN activities a ON a.id = t.activity_id
-            JOIN users u ON u.id = t.user_id
-            {where}
-            GROUP BY a.id ORDER BY total_hours DESC
-            """,
-            p,
-        )
-
-        users_summary = self._fetchall(
-            f"""
-            SELECT u.full_name,
-                   SUM(t.hours) AS total_hours, SUM(t.cost) AS total_cost
-            FROM timesheets t
-            JOIN projects p  ON p.id = t.project_id
-            JOIN clients c   ON c.id = p.client_id
-            JOIN activities a ON a.id = t.activity_id
-            JOIN users u ON u.id = t.user_id
-            {where}
-            GROUP BY u.id ORDER BY total_hours DESC
-            """,
-            p,
-        )
-
-        total_hours = sum(float(t["hours"]) for t in timesheets)
-        total_cost  = sum(float(t["cost"])  for t in timesheets)
-
-        return {
-            "timesheets":         timesheets,
-            "clients_summary":    clients_summary,
-            "projects_summary":   projects_summary,
-            "activities_summary": activities_summary,
-            "users_summary":      users_summary,
-            "total_hours":        total_hours,
-            "total_cost":         total_cost,
-            "start_date":         start_date,
-            "end_date":           end_date,
-        }
-
     # ══════════════════════════════════════════════════════════════════════════
     # DIARY ENTRIES (Diario note/promemoria)
     # ══════════════════════════════════════════════════════════════════════════
@@ -2235,64 +1737,18 @@ class Database:
         show_completed: bool = True,
         only_pending_reminders: bool = False,
     ) -> list[dict[str, Any]]:
-        """Elenca le voci del diario con filtri opzionali."""
-        query = """
-            SELECT d.id, d.client_id, d.project_id, d.activity_id, d.user_id,
-                   d.created_at, d.reminder_date, d.content, d.is_completed, d.priority,
-                   c.name AS client_name,
-                   p.name AS project_name,
-                   a.name AS activity_name,
-                   u.full_name AS user_name
-            FROM diary_entries d
-            LEFT JOIN clients c ON c.id = d.client_id
-            LEFT JOIN projects p ON p.id = d.project_id
-            LEFT JOIN activities a ON a.id = d.activity_id
-            JOIN users u ON u.id = d.user_id
-            WHERE 1=1
-        """
-        params: list[Any] = []
-
-        if client_id:
-            query += " AND d.client_id = ?"
-            params.append(client_id)
-        if project_id:
-            query += " AND d.project_id = ?"
-            params.append(project_id)
-        if activity_id:
-            query += " AND d.activity_id = ?"
-            params.append(activity_id)
-        if user_id:
-            query += " AND d.user_id = ?"
-            params.append(user_id)
-        if not show_completed:
-            query += " AND d.is_completed = 0"
-        if only_pending_reminders:
-            today = datetime.now().strftime("%Y-%m-%d")
-            query += " AND d.reminder_date IS NOT NULL AND d.reminder_date <= ? AND d.is_completed = 0"
-            params.append(today)
-
-        query += " ORDER BY d.priority DESC, d.reminder_date ASC NULLS LAST, d.created_at DESC"
-        return self._fetchall(query, tuple(params))
+        return list_diary_entries_impl(
+            self,
+            client_id=client_id,
+            project_id=project_id,
+            activity_id=activity_id,
+            user_id=user_id,
+            show_completed=show_completed,
+            only_pending_reminders=only_pending_reminders,
+        )
 
     def get_diary_entry(self, entry_id: int) -> dict[str, Any] | None:
-        """Restituisce una singola voce del diario."""
-        return self._fetchone(
-            """
-            SELECT d.id, d.client_id, d.project_id, d.activity_id, d.user_id,
-                   d.created_at, d.reminder_date, d.content, d.is_completed, d.priority,
-                   c.name AS client_name,
-                   p.name AS project_name,
-                   a.name AS activity_name,
-                   u.full_name AS user_name
-            FROM diary_entries d
-            LEFT JOIN clients c ON c.id = d.client_id
-            LEFT JOIN projects p ON p.id = d.project_id
-            LEFT JOIN activities a ON a.id = d.activity_id
-            JOIN users u ON u.id = d.user_id
-            WHERE d.id = ?
-            """,
-            (entry_id,),
-        )
+        return get_diary_entry_impl(self, entry_id)
 
     def create_diary_entry(
         self,
@@ -2304,19 +1760,16 @@ class Database:
         reminder_date: str | None = None,
         priority: int = 0,
     ) -> int:
-        """Crea una nuova voce nel diario. Ritorna l'ID."""
-        if not client_id and not project_id and not activity_id:
-            raise ValueError("Almeno uno tra cliente, commessa o attività deve essere specificato.")
-        
-        cursor = self.conn.execute(
-            """
-            INSERT INTO diary_entries (user_id, content, client_id, project_id, activity_id, reminder_date, priority)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (user_id, content.strip(), client_id, project_id, activity_id, reminder_date or None, priority),
+        return create_diary_entry_impl(
+            self,
+            user_id,
+            content,
+            client_id=client_id,
+            project_id=project_id,
+            activity_id=activity_id,
+            reminder_date=reminder_date,
+            priority=priority,
         )
-        self.conn.commit()
-        return cursor.lastrowid  # type: ignore
 
     def update_diary_entry(
         self,
@@ -2329,68 +1782,23 @@ class Database:
         priority: int | None = None,
         is_completed: int | None = None,
     ) -> bool:
-        """Aggiorna una voce del diario."""
-        fields: list[str] = []
-        params: list[Any] = []
-
-        if content is not None:
-            fields.append("content = ?")
-            params.append(content.strip())
-        if client_id is not None:
-            fields.append("client_id = ?")
-            params.append(client_id if client_id else None)
-        if project_id is not None:
-            fields.append("project_id = ?")
-            params.append(project_id if project_id else None)
-        if activity_id is not None:
-            fields.append("activity_id = ?")
-            params.append(activity_id if activity_id else None)
-        if reminder_date is not None:
-            fields.append("reminder_date = ?")
-            params.append(reminder_date if reminder_date else None)
-        if priority is not None:
-            fields.append("priority = ?")
-            params.append(priority)
-        if is_completed is not None:
-            fields.append("is_completed = ?")
-            params.append(is_completed)
-
-        if not fields:
-            return False
-
-        params.append(entry_id)
-        self.conn.execute(
-            f"UPDATE diary_entries SET {', '.join(fields)} WHERE id = ?",
-            tuple(params),
+        return update_diary_entry_impl(
+            self,
+            entry_id,
+            content=content,
+            client_id=client_id,
+            project_id=project_id,
+            activity_id=activity_id,
+            reminder_date=reminder_date,
+            priority=priority,
+            is_completed=is_completed,
         )
-        self.conn.commit()
-        return True
 
     def delete_diary_entry(self, entry_id: int) -> bool:
-        """Elimina una voce del diario."""
-        cursor = self.conn.execute("DELETE FROM diary_entries WHERE id = ?", (entry_id,))
-        self.conn.commit()
-        return cursor.rowcount > 0
+        return delete_diary_entry_impl(self, entry_id)
 
     def toggle_diary_completed(self, entry_id: int) -> bool:
-        """Inverte lo stato completato di una voce."""
-        self.conn.execute(
-            "UPDATE diary_entries SET is_completed = 1 - is_completed WHERE id = ?",
-            (entry_id,),
-        )
-        self.conn.commit()
-        return True
+        return toggle_diary_completed_impl(self, entry_id)
 
     def count_pending_reminders(self, user_id: int | None = None) -> int:
-        """Conta i promemoria scaduti o in scadenza oggi (non completati)."""
-        today = datetime.now().strftime("%Y-%m-%d")
-        query = """
-            SELECT COUNT(*) AS cnt FROM diary_entries
-            WHERE reminder_date IS NOT NULL AND reminder_date <= ? AND is_completed = 0
-        """
-        params: list[Any] = [today]
-        if user_id:
-            query += " AND user_id = ?"
-            params.append(user_id)
-        row = self.conn.execute(query, tuple(params)).fetchone()
-        return row[0] if row else 0
+        return count_pending_reminders_impl(self, user_id)

@@ -1,4 +1,4 @@
-# APP Timesheet - v3.6.1
+# APP Timesheet - v3.6.9
 
 Applicazione desktop Python con UI `customtkinter` per:
 
@@ -7,6 +7,46 @@ Applicazione desktop Python con UI `customtkinter` per:
 - gestione programmazione ore su commessa/attivita
 - strumenti di controllo (consuntivo, pianificato, costi, scostamenti)
 - piattaforma multiutente con ruoli `admin` e `user`
+
+## Novita v3.6.9
+
+- ridimensionamento `db.py`: estratte le funzioni Diario in `db_diary.py`.
+- `db.py` mantiene la stessa API pubblica Diario tramite wrapper di delega.
+
+## Novita v3.6.8
+
+- ridimensionamento `db.py`: estratta la logica report in `db_reports.py`.
+- `db.py` mantiene la stessa API pubblica (`get_report_*`) tramite wrapper di delega, senza impatti sulla UI.
+
+## Novita v3.6.7
+
+- estratte le utility di formattazione controllo in `ui/tabs/formatters.py`.
+- `ui/tabs/control_tab.py` usa ora formatter condivisi; metodi `_format_*` rimossi da `main.py`.
+
+## Novita v3.6.6
+
+- ridimensionamento tab Utenti: estratta la logica da `main.py` in `ui/tabs/users_tab.py`.
+- `main.py` usa ora wrapper/delega per gestione utenti (crea/modifica, permessi tab, attiva/disattiva, reset password).
+
+## Novita v3.6.5
+
+- ridimensionamento tab Programmazione: estratta la logica CRUD schedule da `main.py` in `ui/tabs/plan_tab.py`.
+- `main.py` usa ora wrapper/delega per `build_plan_tab`, opzioni progetto/attività e operazioni su pianificazioni.
+
+## Novita v3.6.4
+
+- ridimensionamento tab Controllo Programmazione: estratta la logica da `main.py` in `ui/tabs/control_tab.py`.
+- `main.py` usa ora wrapper/delega per `build_control_tab`, `refresh_control_panel` e doppio click tree controllo.
+
+## Novita v3.6.3
+
+- ridimensionamento tab Diario: estratta la logica da `main.py` in `ui/tabs/diary_tab.py`.
+- `main.py` usa ora wrapper/delega per i metodi Diario, mantenendo invariato il comportamento UI.
+
+## Novita v3.6.2
+
+- ridimensionamento `main.py`: estratti i dialog principali in moduli dedicati (`ui/dialogs`) per ridurre complessità e migliorare manutenzione.
+- delega da `main.py` verso moduli esterni per: gestione clienti, gestione commesse, report programmazione, report PDF.
 
 ## Novita v3.6.1
 
