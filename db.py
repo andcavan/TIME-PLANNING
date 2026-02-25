@@ -351,6 +351,24 @@ class Database:
             self.conn.execute("DROP TABLE user_project_assignments")
             self.conn.execute("ALTER TABLE user_project_assignments_new RENAME TO user_project_assignments")
             self.conn.commit()
+        
+        # Crea tabella diary_entries per il diario note/promemoria
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS diary_entries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                client_id INTEGER REFERENCES clients(id) ON DELETE CASCADE,
+                project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
+                activity_id INTEGER REFERENCES activities(id) ON DELETE CASCADE,
+                user_id INTEGER NOT NULL REFERENCES users(id),
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                reminder_date TEXT,
+                content TEXT NOT NULL,
+                is_completed INTEGER NOT NULL DEFAULT 0 CHECK(is_completed IN (0, 1)),
+                priority INTEGER NOT NULL DEFAULT 0 CHECK(priority IN (0, 1)),
+                CHECK(client_id IS NOT NULL OR project_id IS NOT NULL OR activity_id IS NOT NULL)
+            )
+        """)
+        self.conn.commit()
 
     def _seed_admin(self) -> None:
         row = self.conn.execute("SELECT id FROM users LIMIT 1").fetchone()
@@ -2077,3 +2095,302 @@ class Database:
             "num_active_schedules": len(schedules),
             "num_at_risk": len(at_risk)
         }
+
+    def get_report_filtered_data(
+        self,
+        client_id: int | None = None,
+        project_id: int | None = None,
+        activity_id: int | None = None,
+        user_id: int | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> dict[str, Any]:
+        """Recupera dati per report con filtri flessibili (cliente, commessa, attività, utente, periodo)."""
+        conditions: list[str] = []
+        params: list[Any] = []
+
+        if start_date:
+            conditions.append("t.work_date >= ?")
+            params.append(start_date)
+        if end_date:
+            conditions.append("t.work_date <= ?")
+            params.append(end_date)
+        if client_id:
+            conditions.append("p.client_id = ?")
+            params.append(client_id)
+        if project_id:
+            conditions.append("t.project_id = ?")
+            params.append(project_id)
+        if activity_id:
+            conditions.append("t.activity_id = ?")
+            params.append(activity_id)
+        if user_id:
+            conditions.append("t.user_id = ?")
+            params.append(user_id)
+
+        where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+        p = tuple(params)
+
+        timesheets = self._fetchall(
+            f"""
+            SELECT t.work_date, t.hours, t.cost, t.note,
+                   c.name AS client_name, p.name AS project_name,
+                   a.name AS activity_name, u.full_name, u.username
+            FROM timesheets t
+            JOIN projects p ON p.id = t.project_id
+            JOIN clients c  ON c.id = p.client_id
+            JOIN activities a ON a.id = t.activity_id
+            JOIN users u ON u.id = t.user_id
+            {where}
+            ORDER BY t.work_date DESC, c.name, p.name, a.name
+            """,
+            p,
+        )
+
+        clients_summary = self._fetchall(
+            f"""
+            SELECT c.name AS client_name,
+                   SUM(t.hours) AS total_hours, SUM(t.cost) AS total_cost
+            FROM timesheets t
+            JOIN projects p  ON p.id = t.project_id
+            JOIN clients c   ON c.id = p.client_id
+            JOIN activities a ON a.id = t.activity_id
+            JOIN users u ON u.id = t.user_id
+            {where}
+            GROUP BY c.id ORDER BY total_hours DESC
+            """,
+            p,
+        )
+
+        projects_summary = self._fetchall(
+            f"""
+            SELECT c.name AS client_name, p.name AS project_name,
+                   SUM(t.hours) AS total_hours, SUM(t.cost) AS total_cost
+            FROM timesheets t
+            JOIN projects p  ON p.id = t.project_id
+            JOIN clients c   ON c.id = p.client_id
+            JOIN activities a ON a.id = t.activity_id
+            JOIN users u ON u.id = t.user_id
+            {where}
+            GROUP BY p.id ORDER BY total_hours DESC
+            """,
+            p,
+        )
+
+        activities_summary = self._fetchall(
+            f"""
+            SELECT a.name AS activity_name,
+                   SUM(t.hours) AS total_hours, SUM(t.cost) AS total_cost
+            FROM timesheets t
+            JOIN projects p  ON p.id = t.project_id
+            JOIN clients c   ON c.id = p.client_id
+            JOIN activities a ON a.id = t.activity_id
+            JOIN users u ON u.id = t.user_id
+            {where}
+            GROUP BY a.id ORDER BY total_hours DESC
+            """,
+            p,
+        )
+
+        users_summary = self._fetchall(
+            f"""
+            SELECT u.full_name,
+                   SUM(t.hours) AS total_hours, SUM(t.cost) AS total_cost
+            FROM timesheets t
+            JOIN projects p  ON p.id = t.project_id
+            JOIN clients c   ON c.id = p.client_id
+            JOIN activities a ON a.id = t.activity_id
+            JOIN users u ON u.id = t.user_id
+            {where}
+            GROUP BY u.id ORDER BY total_hours DESC
+            """,
+            p,
+        )
+
+        total_hours = sum(float(t["hours"]) for t in timesheets)
+        total_cost  = sum(float(t["cost"])  for t in timesheets)
+
+        return {
+            "timesheets":         timesheets,
+            "clients_summary":    clients_summary,
+            "projects_summary":   projects_summary,
+            "activities_summary": activities_summary,
+            "users_summary":      users_summary,
+            "total_hours":        total_hours,
+            "total_cost":         total_cost,
+            "start_date":         start_date,
+            "end_date":           end_date,
+        }
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # DIARY ENTRIES (Diario note/promemoria)
+    # ══════════════════════════════════════════════════════════════════════════
+
+    def list_diary_entries(
+        self,
+        client_id: int | None = None,
+        project_id: int | None = None,
+        activity_id: int | None = None,
+        user_id: int | None = None,
+        show_completed: bool = True,
+        only_pending_reminders: bool = False,
+    ) -> list[dict[str, Any]]:
+        """Elenca le voci del diario con filtri opzionali."""
+        query = """
+            SELECT d.id, d.client_id, d.project_id, d.activity_id, d.user_id,
+                   d.created_at, d.reminder_date, d.content, d.is_completed, d.priority,
+                   c.name AS client_name,
+                   p.name AS project_name,
+                   a.name AS activity_name,
+                   u.full_name AS user_name
+            FROM diary_entries d
+            LEFT JOIN clients c ON c.id = d.client_id
+            LEFT JOIN projects p ON p.id = d.project_id
+            LEFT JOIN activities a ON a.id = d.activity_id
+            JOIN users u ON u.id = d.user_id
+            WHERE 1=1
+        """
+        params: list[Any] = []
+
+        if client_id:
+            query += " AND d.client_id = ?"
+            params.append(client_id)
+        if project_id:
+            query += " AND d.project_id = ?"
+            params.append(project_id)
+        if activity_id:
+            query += " AND d.activity_id = ?"
+            params.append(activity_id)
+        if user_id:
+            query += " AND d.user_id = ?"
+            params.append(user_id)
+        if not show_completed:
+            query += " AND d.is_completed = 0"
+        if only_pending_reminders:
+            today = datetime.now().strftime("%Y-%m-%d")
+            query += " AND d.reminder_date IS NOT NULL AND d.reminder_date <= ? AND d.is_completed = 0"
+            params.append(today)
+
+        query += " ORDER BY d.priority DESC, d.reminder_date ASC NULLS LAST, d.created_at DESC"
+        return self._fetchall(query, tuple(params))
+
+    def get_diary_entry(self, entry_id: int) -> dict[str, Any] | None:
+        """Restituisce una singola voce del diario."""
+        return self._fetchone(
+            """
+            SELECT d.id, d.client_id, d.project_id, d.activity_id, d.user_id,
+                   d.created_at, d.reminder_date, d.content, d.is_completed, d.priority,
+                   c.name AS client_name,
+                   p.name AS project_name,
+                   a.name AS activity_name,
+                   u.full_name AS user_name
+            FROM diary_entries d
+            LEFT JOIN clients c ON c.id = d.client_id
+            LEFT JOIN projects p ON p.id = d.project_id
+            LEFT JOIN activities a ON a.id = d.activity_id
+            JOIN users u ON u.id = d.user_id
+            WHERE d.id = ?
+            """,
+            (entry_id,),
+        )
+
+    def create_diary_entry(
+        self,
+        user_id: int,
+        content: str,
+        client_id: int | None = None,
+        project_id: int | None = None,
+        activity_id: int | None = None,
+        reminder_date: str | None = None,
+        priority: int = 0,
+    ) -> int:
+        """Crea una nuova voce nel diario. Ritorna l'ID."""
+        if not client_id and not project_id and not activity_id:
+            raise ValueError("Almeno uno tra cliente, commessa o attività deve essere specificato.")
+        
+        cursor = self.conn.execute(
+            """
+            INSERT INTO diary_entries (user_id, content, client_id, project_id, activity_id, reminder_date, priority)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (user_id, content.strip(), client_id, project_id, activity_id, reminder_date or None, priority),
+        )
+        self.conn.commit()
+        return cursor.lastrowid  # type: ignore
+
+    def update_diary_entry(
+        self,
+        entry_id: int,
+        content: str | None = None,
+        client_id: int | None = None,
+        project_id: int | None = None,
+        activity_id: int | None = None,
+        reminder_date: str | None = None,
+        priority: int | None = None,
+        is_completed: int | None = None,
+    ) -> bool:
+        """Aggiorna una voce del diario."""
+        fields: list[str] = []
+        params: list[Any] = []
+
+        if content is not None:
+            fields.append("content = ?")
+            params.append(content.strip())
+        if client_id is not None:
+            fields.append("client_id = ?")
+            params.append(client_id if client_id else None)
+        if project_id is not None:
+            fields.append("project_id = ?")
+            params.append(project_id if project_id else None)
+        if activity_id is not None:
+            fields.append("activity_id = ?")
+            params.append(activity_id if activity_id else None)
+        if reminder_date is not None:
+            fields.append("reminder_date = ?")
+            params.append(reminder_date if reminder_date else None)
+        if priority is not None:
+            fields.append("priority = ?")
+            params.append(priority)
+        if is_completed is not None:
+            fields.append("is_completed = ?")
+            params.append(is_completed)
+
+        if not fields:
+            return False
+
+        params.append(entry_id)
+        self.conn.execute(
+            f"UPDATE diary_entries SET {', '.join(fields)} WHERE id = ?",
+            tuple(params),
+        )
+        self.conn.commit()
+        return True
+
+    def delete_diary_entry(self, entry_id: int) -> bool:
+        """Elimina una voce del diario."""
+        cursor = self.conn.execute("DELETE FROM diary_entries WHERE id = ?", (entry_id,))
+        self.conn.commit()
+        return cursor.rowcount > 0
+
+    def toggle_diary_completed(self, entry_id: int) -> bool:
+        """Inverte lo stato completato di una voce."""
+        self.conn.execute(
+            "UPDATE diary_entries SET is_completed = 1 - is_completed WHERE id = ?",
+            (entry_id,),
+        )
+        self.conn.commit()
+        return True
+
+    def count_pending_reminders(self, user_id: int | None = None) -> int:
+        """Conta i promemoria scaduti o in scadenza oggi (non completati)."""
+        today = datetime.now().strftime("%Y-%m-%d")
+        query = """
+            SELECT COUNT(*) AS cnt FROM diary_entries
+            WHERE reminder_date IS NOT NULL AND reminder_date <= ? AND is_completed = 0
+        """
+        params: list[Any] = [today]
+        if user_id:
+            query += " AND user_id = ?"
+            params.append(user_id)
+        row = self.conn.execute(query, tuple(params)).fetchone()
+        return row[0] if row else 0

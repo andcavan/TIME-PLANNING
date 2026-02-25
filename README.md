@@ -1,4 +1,4 @@
-# APP Timesheet
+# APP Timesheet - v3.6.1
 
 Applicazione desktop Python con UI `customtkinter` per:
 
@@ -7,6 +7,10 @@ Applicazione desktop Python con UI `customtkinter` per:
 - gestione programmazione ore su commessa/attivita
 - strumenti di controllo (consuntivo, pianificato, costi, scostamenti)
 - piattaforma multiutente con ruoli `admin` e `user`
+
+## Novita v3.6.1
+
+- gestione clienti: separata la riga dei pulsanti CRUD dal campo `Costo orario (EUR/h)` per evitare sovrapposizioni UI.
 
 ## Regola costo orario
 
@@ -45,6 +49,41 @@ Lo script:
 - pulisce `build/` e `dist/` (usa `.\build.ps1 -NoClean` per non pulire)
 - installa `pyinstaller` se mancante
 - genera l'eseguibile in `dist\APP-Timesheet-v<versione>\APP-Timesheet-v<versione>.exe`
+
+## Report PDF
+
+Tutti i report sono generati in **A4 orizzontale (landscape)**.
+I campi testo lunghi vanno a capo automaticamente senza sovrapposizioni.
+
+### Vista gerarchica
+
+Il metodo `generate_hierarchical_report` accetta i dati di `get_report_filtered_data` e produce un PDF con la struttura:
+
+```
+▶ Cliente          [ore totali]  [costo €]
+    ▷ Commessa     [ore totali]  [costo €]
+        • Attività [ore totali]  [costo €]
+          Data | Utente | Ore | Costo € | Note
+          ...
+```
+
+Chiamarlo da `main.py` / report view:
+
+```python
+data = db.get_report_filtered_data(client_id=..., start_date=..., end_date=...)
+pdf  = gen.generate_hierarchical_report(data, title="Report Ore", subtitle="Periodo: ...")
+```
+
+## Diario Note & Promemoria
+
+Tab **Diario** per gestire note, promemoria e indicazioni legate a cliente/commessa/attività.
+
+Funzionalità:
+- Filtri per cliente, commessa, attività
+- Priorità normale/alta (⚡)
+- Data promemoria con alert visivo (🔔) se scaduto/oggi
+- Stato completato/aperto
+- Doppio click per modificare, pulsanti per completare/eliminare
 
 ## Credenziali iniziali
 
@@ -88,3 +127,6 @@ oShell.Run """C:\Users\<utente>\AppData\Local\Programs\Python\Python314\pythonw.
 ```
 
 Poi creare un collegamento sul Desktop che punta a questo file `.vbs`.
+
+
+

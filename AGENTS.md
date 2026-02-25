@@ -15,12 +15,16 @@ Le regole locali di progetto possono sovrascrivere queste istruzioni.
 - Alla creazione dell'app genera la versione.
 - Ogni modifica o upgrade deve aggiornare la versione.
 - Suggerisci miglioramenti o alternative alle mie richieste.
+- Ad ogni versione aggiorna il readme
+
 
 ## Codice
 - Mantieni modifiche piccole e focalizzate.
 - Non cambiare parti non richieste.
 - Preserva lo stile gia presente nel progetto.
 - Prima di chiudere, fai almeno un controllo rapido (sintassi/test locali se disponibili).
+- Tieni monitorata la lunghezza dei files, se troppo lunghi attiva logiche di segmentazione.
+
 
 ## Output
 - Usa riferimenti file con path cliccabile quando spieghi modifiche.

@@ -353,6 +353,9 @@ class TimesheetApp(ctk.CTk):
             self.tab_control = self.tabview.add("Controllo Programmazione")
         else:
             self.tab_control = None
+
+        # Tab Diario sempre visibile per tutti
+        self.tab_diary = self.tabview.add("Diario")
             
         if self.is_admin:
             self.tab_users = self.tabview.add("Utenti")
@@ -366,6 +369,7 @@ class TimesheetApp(ctk.CTk):
             self.build_project_management_tab()
         if self.tab_control:
             self.build_control_tab()
+        self.build_diary_tab()
         if self.tab_users:
             self.build_users_tab()
 
@@ -379,6 +383,8 @@ class TimesheetApp(ctk.CTk):
             self.render_calendar()
         if self.tab_control:
             self.refresh_control_panel()
+        self.refresh_diary_data()
+        self.update_diary_alert()
 
     def logout(self) -> None:
         self.current_user = None
@@ -2026,18 +2032,21 @@ class TimesheetApp(ctk.CTk):
         client_email_entry = ctk.CTkEntry(form_frame, placeholder_text="Indirizzo email")
         client_email_entry.grid(row=1, column=3, padx=5, pady=5, sticky="ew")
         
+        notes_row = 3 if self.is_admin else 2
+        buttons_row = notes_row + 1
+
         if self.is_admin:
             ctk.CTkLabel(form_frame, text="Costo orario (€/h):", font=ctk.CTkFont(weight="bold")).grid(
                 row=2, column=0, padx=5, pady=5, sticky="w"
             )
             client_rate_entry = ctk.CTkEntry(form_frame, placeholder_text="0.00", width=120)
             client_rate_entry.grid(row=2, column=1, padx=5, pady=5, sticky="w")
-        
+
         ctk.CTkLabel(form_frame, text="Note:", font=ctk.CTkFont(weight="bold")).grid(
-            row=3, column=0, padx=5, pady=5, sticky="w"
+            row=notes_row, column=0, padx=5, pady=5, sticky="w"
         )
         client_notes_entry = ctk.CTkEntry(form_frame, placeholder_text="Note opzionali")
-        client_notes_entry.grid(row=3, column=1, columnspan=3, padx=5, pady=5, sticky="ew")
+        client_notes_entry.grid(row=notes_row, column=1, columnspan=3, padx=5, pady=5, sticky="ew")
         
         # Funzioni CRUD
         editing_client_id = [None]  # Lista per permettere modifica da inner function
@@ -2160,7 +2169,7 @@ class TimesheetApp(ctk.CTk):
         
         # Pulsanti CRUD
         btn_frame = ctk.CTkFrame(form_frame, fg_color="transparent")
-        btn_frame.grid(row=2, column=0, columnspan=4, pady=10)
+        btn_frame.grid(row=buttons_row, column=0, columnspan=4, pady=(12, 6))
         
         save_btn = ctk.CTkButton(btn_frame, text="Aggiungi Cliente", command=add_or_update_client, width=120)
         save_btn.pack(side="left", padx=5)
@@ -2947,6 +2956,8 @@ class TimesheetApp(ctk.CTk):
             except:
                 start_display = row["start_date"]
                 end_display = row["end_date"]
+            start_display = self.format_date_ui(row["start_date"])
+            end_display = self.format_date_ui(row["end_date"])
             
             status_display = "✓" if row.get("status") == "aperta" else "✗"
             
@@ -3546,6 +3557,388 @@ class TimesheetApp(ctk.CTk):
         else:
             return f"{remaining:.2f}"
 
+    # ══════════════════════════════════════════════════════════════════════════
+    # TAB DIARIO
+    # ══════════════════════════════════════════════════════════════════════════
+
+    def build_diary_tab(self) -> None:
+        self.tab_diary.grid_columnconfigure(0, weight=1)
+        self.tab_diary.grid_rowconfigure(1, weight=1)
+
+        # ── Header filtri ─────────────────────────────────────────────────────
+        filter_frame = ctk.CTkFrame(self.tab_diary)
+        filter_frame.grid(row=0, column=0, padx=8, pady=8, sticky="ew")
+
+        ctk.CTkLabel(filter_frame, text="Cliente").pack(side="left", padx=(12, 4), pady=8)
+        self.diary_client_var = ctk.StringVar(value="Tutti")
+        self.diary_client_combo = ctk.CTkComboBox(filter_frame, width=160, variable=self.diary_client_var, state="readonly")
+        self.diary_client_combo.pack(side="left", padx=4, pady=8)
+        self.diary_client_combo.configure(command=lambda _: self._diary_on_client_change())
+
+        ctk.CTkLabel(filter_frame, text="Commessa").pack(side="left", padx=(12, 4), pady=8)
+        self.diary_project_var = ctk.StringVar(value="Tutte")
+        self.diary_project_combo = ctk.CTkComboBox(filter_frame, width=160, variable=self.diary_project_var, state="readonly")
+        self.diary_project_combo.pack(side="left", padx=4, pady=8)
+        self.diary_project_combo.configure(command=lambda _: self._diary_on_project_change())
+
+        ctk.CTkLabel(filter_frame, text="Attività").pack(side="left", padx=(12, 4), pady=8)
+        self.diary_activity_var = ctk.StringVar(value="Tutte")
+        self.diary_activity_combo = ctk.CTkComboBox(filter_frame, width=160, variable=self.diary_activity_var, state="readonly")
+        self.diary_activity_combo.pack(side="left", padx=4, pady=8)
+
+        self.diary_show_completed_var = ctk.BooleanVar(value=True)
+        ctk.CTkCheckBox(
+            filter_frame, text="Mostra completati", variable=self.diary_show_completed_var,
+            command=self.refresh_diary_data
+        ).pack(side="left", padx=(20, 4), pady=8)
+
+        ctk.CTkButton(filter_frame, text="Filtra", width=80, command=self.refresh_diary_data).pack(side="left", padx=8, pady=8)
+        ctk.CTkButton(filter_frame, text="+ Nuova Nota", width=120, command=self._diary_new_entry).pack(side="right", padx=12, pady=8)
+
+        # ── Tabella note ──────────────────────────────────────────────────────
+        table_frame = ctk.CTkFrame(self.tab_diary)
+        table_frame.grid(row=1, column=0, padx=8, pady=(0, 8), sticky="nsew")
+        table_frame.grid_columnconfigure(0, weight=1)
+        table_frame.grid_rowconfigure(0, weight=1)
+
+        columns = ("id", "alert", "priority", "ref", "content", "reminder", "completed", "user", "created")
+        self.diary_tree = ttk.Treeview(table_frame, columns=columns, show="headings", selectmode="browse")
+        self.diary_tree.heading("id", text="ID")
+        self.diary_tree.heading("alert", text="🔔")
+        self.diary_tree.heading("priority", text="⚡")
+        self.diary_tree.heading("ref", text="Riferimento")
+        self.diary_tree.heading("content", text="Contenuto")
+        self.diary_tree.heading("reminder", text="Promemoria")
+        self.diary_tree.heading("completed", text="Stato")
+        self.diary_tree.heading("user", text="Autore")
+        self.diary_tree.heading("created", text="Creato")
+
+        self.diary_tree.column("id", width=40, anchor="center")
+        self.diary_tree.column("alert", width=40, anchor="center")
+        self.diary_tree.column("priority", width=40, anchor="center")
+        self.diary_tree.column("ref", width=220, anchor="w")
+        self.diary_tree.column("content", width=350, anchor="w")
+        self.diary_tree.column("reminder", width=100, anchor="center")
+        self.diary_tree.column("completed", width=80, anchor="center")
+        self.diary_tree.column("user", width=120, anchor="w")
+        self.diary_tree.column("created", width=100, anchor="center")
+
+        vsb = ttk.Scrollbar(table_frame, orient="vertical", command=self.diary_tree.yview)
+        self.diary_tree.configure(yscrollcommand=vsb.set)
+        self.diary_tree.grid(row=0, column=0, sticky="nsew")
+        vsb.grid(row=0, column=1, sticky="ns")
+
+        self.diary_tree.bind("<Double-1>", lambda _: self._diary_edit_entry())
+
+        # ── Pulsanti azione ───────────────────────────────────────────────────
+        btn_frame = ctk.CTkFrame(self.tab_diary, fg_color="transparent")
+        btn_frame.grid(row=2, column=0, padx=8, pady=8, sticky="ew")
+
+        ctk.CTkButton(btn_frame, text="✓ Completa/Riapri", width=140, command=self._diary_toggle_completed).pack(side="left", padx=4)
+        ctk.CTkButton(btn_frame, text="✏️ Modifica", width=100, command=self._diary_edit_entry).pack(side="left", padx=4)
+        ctk.CTkButton(btn_frame, text="🗑️ Elimina", width=100, fg_color="#c62828", hover_color="#b71c1c", command=self._diary_delete_entry).pack(side="left", padx=4)
+
+        # Popola combo clienti
+        self._diary_populate_combos()
+
+    def _diary_populate_combos(self) -> None:
+        clients = self.db.list_clients()
+        client_opts = ["Tutti"] + [f"{c['id']} - {c['name']}" for c in clients]
+        self.diary_client_combo.configure(values=client_opts)
+        self.diary_client_var.set("Tutti")
+        self.diary_project_combo.configure(values=["Tutte"])
+        self.diary_project_var.set("Tutte")
+        self.diary_activity_combo.configure(values=["Tutte"])
+        self.diary_activity_var.set("Tutte")
+
+    def _diary_on_client_change(self) -> None:
+        client_id = self._id_from_option(self.diary_client_var.get())
+        if client_id:
+            projects = self.db.list_projects(client_id)
+            proj_opts = ["Tutte"] + [f"{p['id']} - {p['name']}" for p in projects]
+        else:
+            proj_opts = ["Tutte"]
+        self.diary_project_combo.configure(values=proj_opts)
+        self.diary_project_var.set("Tutte")
+        self.diary_activity_combo.configure(values=["Tutte"])
+        self.diary_activity_var.set("Tutte")
+
+    def _diary_on_project_change(self) -> None:
+        project_id = self._id_from_option(self.diary_project_var.get())
+        if project_id:
+            activities = self.db.list_activities(project_id)
+            act_opts = ["Tutte"] + [f"{a['id']} - {a['name']}" for a in activities]
+        else:
+            act_opts = ["Tutte"]
+        self.diary_activity_combo.configure(values=act_opts)
+        self.diary_activity_var.set("Tutte")
+
+    def refresh_diary_data(self) -> None:
+        for item in self.diary_tree.get_children():
+            self.diary_tree.delete(item)
+
+        client_id = self._id_from_option(self.diary_client_var.get())
+        project_id = self._id_from_option(self.diary_project_var.get())
+        activity_id = self._id_from_option(self.diary_activity_var.get())
+        show_completed = self.diary_show_completed_var.get()
+
+        entries = self.db.list_diary_entries(
+            client_id=client_id,
+            project_id=project_id,
+            activity_id=activity_id,
+            show_completed=show_completed,
+        )
+
+        today = date.today().isoformat()
+        for e in entries:
+            # Costruisci riferimento
+            ref_parts = []
+            if e.get("client_name"):
+                ref_parts.append(e["client_name"])
+            if e.get("project_name"):
+                ref_parts.append(e["project_name"])
+            if e.get("activity_name"):
+                ref_parts.append(e["activity_name"])
+            ref_str = " › ".join(ref_parts) if ref_parts else "—"
+
+            # Alert
+            alert = ""
+            if e.get("reminder_date") and not e.get("is_completed"):
+                if e["reminder_date"] <= today:
+                    alert = "🔔"
+
+            # Priorità
+            priority = "⚡" if e.get("priority") else ""
+
+            # Stato
+            status = "✓" if e.get("is_completed") else "—"
+
+            # Data formattata
+            reminder_fmt = self._format_date_display(e.get("reminder_date") or "")
+            created_fmt = (e.get("created_at") or "")[:10]
+
+            # Contenuto troncato
+            content = (e.get("content") or "")[:80]
+            if len(e.get("content") or "") > 80:
+                content += "…"
+
+            self.diary_tree.insert("", "end", values=(
+                e["id"], alert, priority, ref_str, content, reminder_fmt, status, e.get("user_name", ""), created_fmt
+            ))
+
+    def _format_date_display(self, date_str: str) -> str:
+        if not date_str:
+            return ""
+        try:
+            d = datetime.strptime(date_str, "%Y-%m-%d")
+            return d.strftime("%d/%m/%Y")
+        except:
+            return date_str
+
+    def update_diary_alert(self) -> None:
+        """Aggiorna il nome della tab con badge se ci sono promemoria scaduti."""
+        count = self.db.count_pending_reminders()
+        tab_name = "Diario"
+        if count > 0:
+            tab_name = f"Diario 🔔{count}"
+        # CTkTabview non ha un metodo per rinominare, quindi aggiorniamo il testo del bottone interno
+        try:
+            if hasattr(self.tabview, "_segmented_button"):
+                # Trova il bottone giusto
+                for btn_name, btn in self.tabview._segmented_button._buttons_dict.items():
+                    if btn_name.startswith("Diario"):
+                        # Non possiamo rinominare facilmente, quindi usiamo un workaround
+                        pass
+        except:
+            pass
+        # Alternativa: schedula un refresh periodico o mostra in altro modo
+
+    def _diary_get_selected_id(self) -> int | None:
+        sel = self.diary_tree.selection()
+        if not sel:
+            messagebox.showwarning("Selezione", "Seleziona una nota.")
+            return None
+        return int(self.diary_tree.item(sel[0], "values")[0])
+
+    def _diary_toggle_completed(self) -> None:
+        entry_id = self._diary_get_selected_id()
+        if entry_id:
+            self.db.toggle_diary_completed(entry_id)
+            self.refresh_diary_data()
+            self.update_diary_alert()
+
+    def _diary_delete_entry(self) -> None:
+        entry_id = self._diary_get_selected_id()
+        if not entry_id:
+            return
+        if messagebox.askyesno("Conferma", "Eliminare questa nota?"):
+            self.db.delete_diary_entry(entry_id)
+            self.refresh_diary_data()
+            self.update_diary_alert()
+
+    def _diary_new_entry(self) -> None:
+        self._diary_open_editor(None)
+
+    def _diary_edit_entry(self) -> None:
+        entry_id = self._diary_get_selected_id()
+        if entry_id:
+            self._diary_open_editor(entry_id)
+
+    def _diary_open_editor(self, entry_id: int | None) -> None:
+        is_edit = entry_id is not None
+        entry = self.db.get_diary_entry(entry_id) if is_edit else None
+
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("Modifica Nota" if is_edit else "Nuova Nota")
+        dialog.geometry("600x500")
+        dialog.transient(self)
+        dialog.grab_set()
+
+        pad = {"padx": 12, "pady": 6}
+
+        # Cliente
+        ctk.CTkLabel(dialog, text="Cliente").pack(anchor="w", **pad)
+        client_var = ctk.StringVar()
+        client_combo = ctk.CTkComboBox(dialog, width=400, variable=client_var, state="readonly")
+        client_combo.pack(anchor="w", **pad)
+
+        # Commessa
+        ctk.CTkLabel(dialog, text="Commessa").pack(anchor="w", **pad)
+        project_var = ctk.StringVar()
+        project_combo = ctk.CTkComboBox(dialog, width=400, variable=project_var, state="readonly")
+        project_combo.pack(anchor="w", **pad)
+
+        # Attività
+        ctk.CTkLabel(dialog, text="Attività").pack(anchor="w", **pad)
+        activity_var = ctk.StringVar()
+        activity_combo = ctk.CTkComboBox(dialog, width=400, variable=activity_var, state="readonly")
+        activity_combo.pack(anchor="w", **pad)
+
+        # Popola combo
+        clients = self.db.list_clients()
+        client_opts = ["— Nessuno —"] + [f"{c['id']} - {c['name']}" for c in clients]
+        client_combo.configure(values=client_opts)
+
+        def on_client_change(_=None):
+            cid = self._id_from_option(client_var.get())
+            if cid:
+                projs = self.db.list_projects(cid)
+                proj_opts = ["— Nessuna —"] + [f"{p['id']} - {p['name']}" for p in projs]
+            else:
+                proj_opts = ["— Nessuna —"]
+            project_combo.configure(values=proj_opts)
+            project_var.set("— Nessuna —")
+            activity_combo.configure(values=["— Nessuna —"])
+            activity_var.set("— Nessuna —")
+
+        def on_project_change(_=None):
+            pid = self._id_from_option(project_var.get())
+            if pid:
+                acts = self.db.list_activities(pid)
+                act_opts = ["— Nessuna —"] + [f"{a['id']} - {a['name']}" for a in acts]
+            else:
+                act_opts = ["— Nessuna —"]
+            activity_combo.configure(values=act_opts)
+            activity_var.set("— Nessuna —")
+
+        client_combo.configure(command=on_client_change)
+        project_combo.configure(command=on_project_change)
+
+        # Preset valori se edit
+        if entry:
+            if entry.get("client_id"):
+                for opt in client_opts:
+                    if opt.startswith(f"{entry['client_id']} -"):
+                        client_var.set(opt)
+                        on_client_change()
+                        break
+            if entry.get("project_id"):
+                projs = self.db.list_projects(entry["client_id"]) if entry.get("client_id") else []
+                proj_opts = ["— Nessuna —"] + [f"{p['id']} - {p['name']}" for p in projs]
+                project_combo.configure(values=proj_opts)
+                for opt in proj_opts:
+                    if opt.startswith(f"{entry['project_id']} -"):
+                        project_var.set(opt)
+                        on_project_change()
+                        break
+            if entry.get("activity_id"):
+                acts = self.db.list_activities(entry["project_id"]) if entry.get("project_id") else []
+                act_opts = ["— Nessuna —"] + [f"{a['id']} - {a['name']}" for a in acts]
+                activity_combo.configure(values=act_opts)
+                for opt in act_opts:
+                    if opt.startswith(f"{entry['activity_id']} -"):
+                        activity_var.set(opt)
+                        break
+        else:
+            client_var.set("— Nessuno —")
+            project_combo.configure(values=["— Nessuna —"])
+            project_var.set("— Nessuna —")
+            activity_combo.configure(values=["— Nessuna —"])
+            activity_var.set("— Nessuna —")
+
+        # Promemoria
+        ctk.CTkLabel(dialog, text="Promemoria (YYYY-MM-DD)").pack(anchor="w", **pad)
+        reminder_entry = ctk.CTkEntry(dialog, width=150)
+        reminder_entry.pack(anchor="w", **pad)
+        if entry and entry.get("reminder_date"):
+            reminder_entry.insert(0, entry["reminder_date"])
+
+        # Priorità
+        priority_var = ctk.BooleanVar(value=entry.get("priority", 0) if entry else False)
+        ctk.CTkCheckBox(dialog, text="Priorità alta ⚡", variable=priority_var).pack(anchor="w", **pad)
+
+        # Contenuto
+        ctk.CTkLabel(dialog, text="Contenuto").pack(anchor="w", **pad)
+        content_text = ctk.CTkTextbox(dialog, width=560, height=120)
+        content_text.pack(anchor="w", **pad)
+        if entry and entry.get("content"):
+            content_text.insert("1.0", entry["content"])
+
+        def save():
+            client_id = self._id_from_option(client_var.get())
+            project_id = self._id_from_option(project_var.get())
+            activity_id = self._id_from_option(activity_var.get())
+            content = content_text.get("1.0", "end").strip()
+            reminder = reminder_entry.get().strip() or None
+            priority = 1 if priority_var.get() else 0
+
+            if not content:
+                messagebox.showwarning("Errore", "Il contenuto non può essere vuoto.")
+                return
+
+            if not client_id and not project_id and not activity_id:
+                messagebox.showwarning("Errore", "Seleziona almeno un cliente, commessa o attività.")
+                return
+
+            try:
+                if is_edit:
+                    self.db.update_diary_entry(
+                        entry_id,
+                        content=content,
+                        client_id=client_id or 0,
+                        project_id=project_id or 0,
+                        activity_id=activity_id or 0,
+                        reminder_date=reminder or "",
+                        priority=priority,
+                    )
+                else:
+                    self.db.create_diary_entry(
+                        user_id=self.current_user["id"],
+                        content=content,
+                        client_id=client_id,
+                        project_id=project_id,
+                        activity_id=activity_id,
+                        reminder_date=reminder,
+                        priority=priority,
+                    )
+                dialog.destroy()
+                self.refresh_diary_data()
+                self.update_diary_alert()
+            except Exception as e:
+                messagebox.showerror("Errore", str(e))
+
+        ctk.CTkButton(dialog, text="Salva", width=120, command=save).pack(pady=16)
+
     def build_users_tab(self) -> None:
         self.tab_users.grid_columnconfigure(0, weight=1)
         self.tab_users.grid_rowconfigure(3, weight=1)
@@ -3837,390 +4230,227 @@ class TimesheetApp(ctk.CTk):
         messagebox.showinfo("Utenti", "Password aggiornata.")
 
     def show_pdf_report_dialog(self) -> None:
-        """Apre finestra di dialogo per selezionare e generare report PDF."""
+        """Apre finestra di dialogo per configurare e generare report PDF."""
         dialog = ctk.CTkToplevel(self)
         dialog.title("Genera Report PDF")
-        dialog.geometry("600x700")
+        dialog.geometry("560x680")
         dialog.resizable(False, False)
         dialog.transient(self)
         dialog.grab_set()
-        
-        # Container principale con scrollbar
-        main_container = ctk.CTkScrollableFrame(dialog)
-        main_container.pack(fill="both", expand=True, padx=10, pady=10)
-        
-        # Titolo
+
+        pad = {"padx": 12, "pady": 6}
+
+        # ── titolo ──────────────────────────────────────────────────────
         ctk.CTkLabel(
-            main_container, 
-            text="Generazione Report PDF", 
-            font=ctk.CTkFont(size=18, weight="bold")
-        ).pack(pady=(0, 20))
-        
-        # Selezione tipo report
-        report_frame = ctk.CTkFrame(main_container)
-        report_frame.pack(fill="x", padx=10, pady=10)
-        
-        ctk.CTkLabel(report_frame, text="Tipo Report:", font=ctk.CTkFont(size=14, weight="bold")).pack(
-            anchor="w", padx=10, pady=(10, 5)
+            dialog, text="Generazione Report PDF",
+            font=ctk.CTkFont(size=18, weight="bold"),
+        ).pack(pady=(16, 8))
+
+        # ── frame selezione cliente / commessa / attività ────────────────
+        sel_frame = ctk.CTkFrame(dialog)
+        sel_frame.pack(fill="x", **pad)
+
+        ctk.CTkLabel(sel_frame, text="Filtri", font=ctk.CTkFont(size=13, weight="bold")).grid(
+            row=0, column=0, columnspan=2, sticky="w", padx=10, pady=(8, 4)
         )
-        
-        report_types = [
-            "Programmazione Singola",
-            "Report Cliente",
-            "Report Commessa",
-            "Report Periodo",
-            "Report Utente",
-            "Report Generale"
-        ]
-        
-        report_type_var = ctk.StringVar(value=report_types[0])
-        report_combo = ctk.CTkComboBox(
-            report_frame,
-            variable=report_type_var,
-            values=report_types,
-            width=500,
-            state="readonly"
+
+        def _lbl(text, row):
+            ctk.CTkLabel(sel_frame, text=text, anchor="w").grid(
+                row=row, column=0, sticky="w", padx=(10, 4), pady=3
+            )
+
+        _lbl("Cliente:", 1)
+        _lbl("Commessa:", 2)
+        _lbl("Attività:", 3)
+
+        # carica dati base
+        all_clients  = self.db.list_clients()
+        all_projects = self.db.list_projects()
+        all_activities = self.db.list_activities()
+
+        client_options  = ["Tutti i clienti"]  + [f"{c['id']} - {c['name']}"   for c in all_clients]
+        project_options = ["Tutte le commesse"] + [f"{p['id']} - {p['client_name']} / {p['name']}" for p in all_projects]
+        activity_options= ["Tutte le attività"] + [f"{a['id']} - {a['name']}"  for a in all_activities]
+
+        client_var   = ctk.StringVar(value=client_options[0])
+        project_var  = ctk.StringVar(value=project_options[0])
+        activity_var = ctk.StringVar(value=activity_options[0])
+
+        client_cb = ctk.CTkComboBox(sel_frame, variable=client_var,
+                                    values=client_options, width=380, state="readonly")
+        client_cb.grid(row=1, column=1, sticky="w", padx=(4, 10), pady=3)
+
+        project_cb = ctk.CTkComboBox(sel_frame, variable=project_var,
+                                     values=project_options, width=380, state="readonly")
+        project_cb.grid(row=2, column=1, sticky="w", padx=(4, 10), pady=3)
+
+        activity_cb = ctk.CTkComboBox(sel_frame, variable=activity_var,
+                                      values=activity_options, width=380, state="readonly")
+        activity_cb.grid(row=3, column=1, sticky="w", padx=(4, 10), pady=(3, 10))
+
+        # cascade: cambio cliente → aggiorna commesse
+        def on_client_change(*_):
+            cid = self._id_from_option(client_var.get())
+            if cid:
+                projs = self.db.list_projects(client_id=cid)
+                opts = ["Tutte le commesse"] + [
+                    f"{p['id']} - {p['client_name']} / {p['name']}" for p in projs
+                ]
+            else:
+                opts = ["Tutte le commesse"] + [
+                    f"{p['id']} - {p['client_name']} / {p['name']}" for p in all_projects
+                ]
+            project_cb.configure(values=opts)
+            project_var.set(opts[0])
+            on_project_change()
+
+        # cascade: cambio commessa → aggiorna attività
+        def on_project_change(*_):
+            pid = self._id_from_option(project_var.get())
+            if pid:
+                acts = self.db.list_activities(project_id=pid)
+                opts = ["Tutte le attività"] + [f"{a['id']} - {a['name']}" for a in acts]
+            else:
+                # filtra per cliente se selezionato
+                cid = self._id_from_option(client_var.get())
+                if cid:
+                    projs_of_client = self.db.list_projects(client_id=cid)
+                    pid_list = [p['id'] for p in projs_of_client]
+                    acts = [a for a in all_activities
+                            if any(True for p in pid_list
+                                   if self.db.list_activities(project_id=p))]
+                    # semplice: rimostra tutte
+                acts = all_activities
+                opts = ["Tutte le attività"] + [f"{a['id']} - {a['name']}" for a in acts]
+            activity_cb.configure(values=opts)
+            activity_var.set(opts[0])
+
+        client_var.trace_add("write", on_client_change)
+        project_var.trace_add("write", on_project_change)
+
+        # ── frame utente ─────────────────────────────────────────────────
+        usr_frame = ctk.CTkFrame(dialog)
+        usr_frame.pack(fill="x", **pad)
+
+        ctk.CTkLabel(usr_frame, text="Utente", font=ctk.CTkFont(size=13, weight="bold")).grid(
+            row=0, column=0, columnspan=2, sticky="w", padx=10, pady=(8, 4)
         )
-        report_combo.pack(padx=10, pady=(0, 10))
-        
-        # Frame per filtri dinamici
-        filters_frame = ctk.CTkFrame(main_container)
-        filters_frame.pack(fill="both", expand=True, padx=10, pady=10)
-        
-        # Widgets che cambiano in base al tipo di report
-        filter_widgets = {}
-        
-        def update_filters(*args):
-            """Aggiorna i filtri visualizzati in base al tipo di report selezionato."""
-            # Pulisci frame
-            for widget in filters_frame.winfo_children():
-                widget.destroy()
-            filter_widgets.clear()
-            
-            selected_type = report_type_var.get()
-            
-            ctk.CTkLabel(
-                filters_frame, 
-                text="Filtri:", 
-                font=ctk.CTkFont(size=14, weight="bold")
-            ).pack(anchor="w", padx=10, pady=(10, 10))
-            
-            # Programmazione Singola - Selezione programmazione
-            if selected_type == "Programmazione Singola":
-                schedules = self.db.list_schedules()
-                schedule_options = [
-                    f"{s['id']} - {s['client_name']} / {s['project_name']} / {s['activity_name']}"
-                    for s in schedules
-                ]
-                
-                ctk.CTkLabel(filters_frame, text="Programmazione:").pack(anchor="w", padx=10, pady=(5, 2))
-                schedule_combo = ctk.CTkComboBox(
-                    filters_frame,
-                    values=schedule_options if schedule_options else ["Nessuna programmazione disponibile"],
-                    width=500,
-                    state="readonly"
-                )
-                schedule_combo.pack(padx=10, pady=(0, 10))
-                if schedule_options:
-                    schedule_combo.set(schedule_options[0])
-                filter_widgets['schedule'] = schedule_combo
-            
-            # Report Cliente
-            elif selected_type == "Report Cliente":
-                clients = self.db.list_clients()
-                client_options = [f"{c['id']} - {c['name']}" for c in clients]
-                
-                ctk.CTkLabel(filters_frame, text="Cliente:").pack(anchor="w", padx=10, pady=(5, 2))
-                client_combo = ctk.CTkComboBox(
-                    filters_frame,
-                    values=client_options if client_options else ["Nessun cliente disponibile"],
-                    width=500,
-                    state="readonly"
-                )
-                client_combo.pack(padx=10, pady=(0, 10))
-                if client_options:
-                    client_combo.set(client_options[0])
-                filter_widgets['client'] = client_combo
-                
-                # Periodo opzionale
-                ctk.CTkLabel(filters_frame, text="Periodo (opzionale):").pack(anchor="w", padx=10, pady=(10, 2))
-                
-                date_frame = ctk.CTkFrame(filters_frame)
-                date_frame.pack(fill="x", padx=10, pady=5)
-                
-                ctk.CTkLabel(date_frame, text="Da:").pack(side="left", padx=(10, 5))
-                start_entry = ctk.CTkEntry(date_frame, placeholder_text="YYYY-MM-DD", width=120)
-                start_entry.pack(side="left", padx=5)
-                
-                ctk.CTkLabel(date_frame, text="A:").pack(side="left", padx=(10, 5))
-                end_entry = ctk.CTkEntry(date_frame, placeholder_text="YYYY-MM-DD", width=120)
-                end_entry.pack(side="left", padx=5)
-                
-                filter_widgets['start_date'] = start_entry
-                filter_widgets['end_date'] = end_entry
-            
-            # Report Commessa
-            elif selected_type == "Report Commessa":
-                projects = self.db.list_projects()
-                project_options = [
-                    f"{p['id']} - {p['client_name']} / {p['name']}"
-                    for p in projects
-                ]
-                
-                ctk.CTkLabel(filters_frame, text="Commessa:").pack(anchor="w", padx=10, pady=(5, 2))
-                project_combo = ctk.CTkComboBox(
-                    filters_frame,
-                    values=project_options if project_options else ["Nessuna commessa disponibile"],
-                    width=500,
-                    state="readonly"
-                )
-                project_combo.pack(padx=10, pady=(0, 10))
-                if project_options:
-                    project_combo.set(project_options[0])
-                filter_widgets['project'] = project_combo
-            
-            # Report Periodo
-            elif selected_type == "Report Periodo":
-                ctk.CTkLabel(filters_frame, text="Periodo:").pack(anchor="w", padx=10, pady=(5, 2))
-                
-                date_frame = ctk.CTkFrame(filters_frame)
-                date_frame.pack(fill="x", padx=10, pady=5)
-                
-                ctk.CTkLabel(date_frame, text="Da:").pack(side="left", padx=(10, 5))
-                start_entry = ctk.CTkEntry(date_frame, placeholder_text="YYYY-MM-DD", width=120)
-                start_entry.pack(side="left", padx=5)
-                
-                ctk.CTkLabel(date_frame, text="A:").pack(side="left", padx=(10, 5))
-                end_entry = ctk.CTkEntry(date_frame, placeholder_text="YYYY-MM-DD", width=120)
-                end_entry.pack(side="left", padx=5)
-                
-                filter_widgets['start_date'] = start_entry
-                filter_widgets['end_date'] = end_entry
-                
-                # Filtri opzionali
-                ctk.CTkLabel(filters_frame, text="Filtri aggiuntivi (opzionali):").pack(anchor="w", padx=10, pady=(10, 2))
-                
-                # Cliente
-                clients = self.db.list_clients()
-                client_options = ["Tutti i clienti"] + [f"{c['id']} - {c['name']}" for c in clients]
-                
-                ctk.CTkLabel(filters_frame, text="Cliente:").pack(anchor="w", padx=10, pady=(5, 2))
-                client_combo = ctk.CTkComboBox(filters_frame, values=client_options, width=500, state="readonly")
-                client_combo.set(client_options[0])
-                client_combo.pack(padx=10, pady=(0, 10))
-                filter_widgets['period_client'] = client_combo
-                
-                # Commessa
-                projects = self.db.list_projects()
-                project_options = ["Tutte le commesse"] + [
-                    f"{p['id']} - {p['client_name']} / {p['name']}"
-                    for p in projects
-                ]
-                
-                ctk.CTkLabel(filters_frame, text="Commessa:").pack(anchor="w", padx=10, pady=(5, 2))
-                project_combo = ctk.CTkComboBox(filters_frame, values=project_options, width=500, state="readonly")
-                project_combo.set(project_options[0])
-                project_combo.pack(padx=10, pady=(0, 10))
-                filter_widgets['period_project'] = project_combo
-                
-                # Utente
-                users = self.db.list_users()
-                user_options = ["Tutti gli utenti"] + [f"{u['id']} - {u['full_name']}" for u in users]
-                
-                ctk.CTkLabel(filters_frame, text="Utente:").pack(anchor="w", padx=10, pady=(5, 2))
-                user_combo = ctk.CTkComboBox(filters_frame, values=user_options, width=500, state="readonly")
-                user_combo.set(user_options[0])
-                user_combo.pack(padx=10, pady=(0, 10))
-                filter_widgets['period_user'] = user_combo
-            
-            # Report Utente
-            elif selected_type == "Report Utente":
-                users = self.db.list_users()
-                user_options = [f"{u['id']} - {u['full_name']}" for u in users]
-                
-                ctk.CTkLabel(filters_frame, text="Utente:").pack(anchor="w", padx=10, pady=(5, 2))
-                user_combo = ctk.CTkComboBox(
-                    filters_frame,
-                    values=user_options if user_options else ["Nessun utente disponibile"],
-                    width=500,
-                    state="readonly"
-                )
-                user_combo.pack(padx=10, pady=(0, 10))
-                if user_options:
-                    user_combo.set(user_options[0])
-                filter_widgets['user'] = user_combo
-                
-                # Periodo
-                ctk.CTkLabel(filters_frame, text="Periodo:").pack(anchor="w", padx=10, pady=(10, 2))
-                
-                date_frame = ctk.CTkFrame(filters_frame)
-                date_frame.pack(fill="x", padx=10, pady=5)
-                
-                ctk.CTkLabel(date_frame, text="Da:").pack(side="left", padx=(10, 5))
-                start_entry = ctk.CTkEntry(date_frame, placeholder_text="YYYY-MM-DD", width=120)
-                start_entry.pack(side="left", padx=5)
-                
-                ctk.CTkLabel(date_frame, text="A:").pack(side="left", padx=(10, 5))
-                end_entry = ctk.CTkEntry(date_frame, placeholder_text="YYYY-MM-DD", width=120)
-                end_entry.pack(side="left", padx=5)
-                
-                filter_widgets['start_date'] = start_entry
-                filter_widgets['end_date'] = end_entry
-            
-            # Report Generale
-            elif selected_type == "Report Generale":
-                ctk.CTkLabel(
-                    filters_frame, 
-                    text="Il report generale mostra una panoramica completa di tutte le programmazioni.",
-                    wraplength=500
-                ).pack(padx=10, pady=10)
-                
-                # Periodo opzionale
-                ctk.CTkLabel(filters_frame, text="Periodo (opzionale - lasciare vuoto per tutte):").pack(
-                    anchor="w", padx=10, pady=(10, 2)
-                )
-                
-                date_frame = ctk.CTkFrame(filters_frame)
-                date_frame.pack(fill="x", padx=10, pady=5)
-                
-                ctk.CTkLabel(date_frame, text="Da:").pack(side="left", padx=(10, 5))
-                start_entry = ctk.CTkEntry(date_frame, placeholder_text="YYYY-MM-DD", width=120)
-                start_entry.pack(side="left", padx=5)
-                
-                ctk.CTkLabel(date_frame, text="A:").pack(side="left", padx=(10, 5))
-                end_entry = ctk.CTkEntry(date_frame, placeholder_text="YYYY-MM-DD", width=120)
-                end_entry.pack(side="left", padx=5)
-                
-                filter_widgets['start_date'] = start_entry
-                filter_widgets['end_date'] = end_entry
-        
-        # Bind per cambiamento tipo report
-        report_type_var.trace_add("write", update_filters)
-        update_filters()  # Inizializza filtri
-        
-        # Pulsanti azione
-        button_frame = ctk.CTkFrame(dialog)
-        button_frame.pack(fill="x", padx=10, pady=10)
-        
+        ctk.CTkLabel(usr_frame, text="Utente:", anchor="w").grid(
+            row=1, column=0, sticky="w", padx=(10, 4), pady=(3, 10)
+        )
+        all_users = self.db.list_users(include_inactive=False)
+        user_options = ["Tutti gli utenti"] + [f"{u['id']} - {u['full_name']}" for u in all_users]
+        user_var = ctk.StringVar(value=user_options[0])
+        ctk.CTkComboBox(usr_frame, variable=user_var,
+                        values=user_options, width=380, state="readonly").grid(
+            row=1, column=1, sticky="w", padx=(4, 10), pady=(3, 10)
+        )
+
+        # ── frame periodo (opzionale) ─────────────────────────────────────
+        per_frame = ctk.CTkFrame(dialog)
+        per_frame.pack(fill="x", **pad)
+
+        ctk.CTkLabel(per_frame, text="Periodo (opzionale)", font=ctk.CTkFont(size=13, weight="bold")).grid(
+            row=0, column=0, columnspan=4, sticky="w", padx=10, pady=(8, 4)
+        )
+        ctk.CTkLabel(per_frame, text="Da:", anchor="w").grid(row=1, column=0, sticky="w", padx=(10, 4), pady=(3, 10))
+        start_entry = ctk.CTkEntry(per_frame, placeholder_text="YYYY-MM-DD", width=130)
+        start_entry.grid(row=1, column=1, sticky="w", padx=4, pady=(3, 10))
+        ctk.CTkLabel(per_frame, text="A:", anchor="w").grid(row=1, column=2, sticky="w", padx=(10, 4), pady=(3, 10))
+        end_entry = ctk.CTkEntry(per_frame, placeholder_text="YYYY-MM-DD", width=130)
+        end_entry.grid(row=1, column=3, sticky="w", padx=4, pady=(3, 10))
+
+        # ── frame tipo report ─────────────────────────────────────────────
+        type_frame = ctk.CTkFrame(dialog)
+        type_frame.pack(fill="x", **pad)
+
+        ctk.CTkLabel(type_frame, text="Tipo Report", font=ctk.CTkFont(size=13, weight="bold")).pack(
+            anchor="w", padx=10, pady=(8, 4)
+        )
+        mode_var = ctk.StringVar(value="sintetica")
+        radio_row = ctk.CTkFrame(type_frame, fg_color="transparent")
+        radio_row.pack(anchor="w", padx=10, pady=(0, 10))
+        ctk.CTkRadioButton(radio_row, text="Sintetica",   variable=mode_var, value="sintetica").pack(side="left", padx=(0, 24))
+        ctk.CTkRadioButton(radio_row, text="Dettagliata", variable=mode_var, value="dettagliata").pack(side="left", padx=(0, 24))
+        ctk.CTkRadioButton(radio_row, text="Gerarchica",  variable=mode_var, value="gerarchica").pack(side="left")
+
+        # ── pulsanti ─────────────────────────────────────────────────────
+        btn_frame = ctk.CTkFrame(dialog, fg_color="transparent")
+        btn_frame.pack(fill="x", padx=12, pady=(8, 16))
+
         def generate_pdf():
-            """Genera il PDF in base alla selezione."""
             try:
-                selected_type = report_type_var.get()
+                client_id   = self._id_from_option(client_var.get())
+                project_id  = self._id_from_option(project_var.get())
+                activity_id = self._id_from_option(activity_var.get())
+                user_id     = self._id_from_option(user_var.get())
+                start_date  = start_entry.get().strip() or None
+                end_date    = end_entry.get().strip() or None
+                mode        = mode_var.get()
+
+                # Costruisci sottotitolo descrittivo
+                parts = []
+                if client_id:
+                    parts.append(client_var.get().split(" - ", 1)[-1] if " - " in client_var.get() else client_var.get())
+                if project_id:
+                    raw = project_var.get().split(" - ", 1)[-1] if " - " in project_var.get() else project_var.get()
+                    parts.append(raw.split(" / ")[-1] if " / " in raw else raw)
+                if activity_id:
+                    parts.append(activity_var.get().split(" - ", 1)[-1] if " - " in activity_var.get() else activity_var.get())
+                if user_id:
+                    parts.append("Utente: " + (user_var.get().split(" - ", 1)[-1] if " - " in user_var.get() else user_var.get()))
+                if start_date and end_date:
+                    parts.append(f"Dal {start_date} al {end_date}")
+
+                subtitle = "  ›  ".join(parts) if parts else "Tutti i dati"
+                title_mode = "Dettagliato" if mode == "dettagliata" else ("Gerarchico" if mode == "gerarchica" else "Sintetico")
+                title = f"Report {title_mode}"
+
+                data = self.db.get_report_filtered_data(
+                    client_id=client_id,
+                    project_id=project_id,
+                    activity_id=activity_id,
+                    user_id=user_id,
+                    start_date=start_date,
+                    end_date=end_date,
+                )
+
+                if not data['timesheets']:
+                    messagebox.showwarning("Nessun dato", "Nessun inserimento trovato con i filtri selezionati.")
+                    return
+
                 generator = PDFReportGenerator()
-                
-                # Programmazione Singola
-                if selected_type == "Programmazione Singola":
-                    schedule_id = self._id_from_option(filter_widgets['schedule'].get())
-                    if not schedule_id:
-                        messagebox.showerror("Errore", "Seleziona una programmazione valida.")
-                        return
-                    
-                    data = self.db.get_schedule_report_data(schedule_id)
-                    output_path = generator.generate_schedule_report(data)
-                
-                # Report Cliente
-                elif selected_type == "Report Cliente":
-                    client_id = self._id_from_option(filter_widgets['client'].get())
-                    if not client_id:
-                        messagebox.showerror("Errore", "Seleziona un cliente valido.")
-                        return
-                    
-                    start_date = filter_widgets['start_date'].get().strip() or None
-                    end_date = filter_widgets['end_date'].get().strip() or None
-                    dates = (start_date, end_date) if start_date and end_date else None
-                    
-                    data = self.db.get_report_client_data(client_id, dates)
-                    output_path = generator.generate_client_report(data)
-                
-                # Report Commessa
-                elif selected_type == "Report Commessa":
-                    project_id = self._id_from_option(filter_widgets['project'].get())
-                    if not project_id:
-                        messagebox.showerror("Errore", "Seleziona una commessa valida.")
-                        return
-                    
-                    data = self.db.get_report_project_data(project_id)
-                    output_path = generator.generate_project_report(data)
-                
-                # Report Periodo
-                elif selected_type == "Report Periodo":
-                    start_date = filter_widgets['start_date'].get().strip()
-                    end_date = filter_widgets['end_date'].get().strip()
-                    
-                    if not start_date or not end_date:
-                        messagebox.showerror("Errore", "Inserisci periodo valido (da - a).")
-                        return
-                    
-                    # Filtri opzionali
-                    filters = {}
-                    
-                    client_val = filter_widgets['period_client'].get()
-                    if not client_val.startswith("Tutti"):
-                        filters['client_id'] = self._id_from_option(client_val)
-                    
-                    project_val = filter_widgets['period_project'].get()
-                    if not project_val.startswith("Tutte"):
-                        filters['project_id'] = self._id_from_option(project_val)
-                    
-                    user_val = filter_widgets['period_user'].get()
-                    if not user_val.startswith("Tutti"):
-                        filters['user_id'] = self._id_from_option(user_val)
-                    
-                    data = self.db.get_report_period_data(start_date, end_date, filters)
-                    output_path = generator.generate_period_report(data)
-                
-                # Report Utente
-                elif selected_type == "Report Utente":
-                    user_id = self._id_from_option(filter_widgets['user'].get())
-                    if not user_id:
-                        messagebox.showerror("Errore", "Seleziona un utente valido.")
-                        return
-                    
-                    start_date = filter_widgets['start_date'].get().strip()
-                    end_date = filter_widgets['end_date'].get().strip()
-                    
-                    if not start_date or not end_date:
-                        messagebox.showerror("Errore", "Inserisci periodo valido (da - a).")
-                        return
-                    
-                    data = self.db.get_report_user_data(user_id, (start_date, end_date))
-                    output_path = generator.generate_user_report(data)
-                
-                # Report Generale
-                elif selected_type == "Report Generale":
-                    start_date = filter_widgets['start_date'].get().strip() or None
-                    end_date = filter_widgets['end_date'].get().strip() or None
-                    dates = (start_date, end_date) if start_date and end_date else None
-                    
-                    data = self.db.get_report_general_data(dates)
-                    output_path = generator.generate_general_report(data)
-                
-                # Successo
+                if mode == "gerarchica":
+                    output_path = generator.generate_hierarchical_report(
+                        data=data,
+                        title=title,
+                        subtitle=subtitle,
+                    )
+                else:
+                    output_path = generator.generate_filtered_report(
+                        data=data,
+                        mode=mode,
+                        title=title,
+                        subtitle=subtitle,
+                    )
+
                 messagebox.showinfo(
                     "Report Generato",
-                    f"Report PDF generato con successo:\n{output_path.name}\n\nCartella: {output_path.parent}"
+                    f"PDF generato:\n{output_path.name}\n\nCartella: {output_path.parent}",
                 )
                 dialog.destroy()
-                
+
             except Exception as e:
                 messagebox.showerror("Errore", f"Errore durante la generazione del report:\n{str(e)}")
-        
+
         ctk.CTkButton(
-            button_frame,
-            text="Genera PDF",
-            command=generate_pdf,
-            width=200,
-            height=40,
-            font=ctk.CTkFont(size=14, weight="bold")
-        ).pack(side="left", padx=(10, 5), pady=10)
-        
+            btn_frame, text="Genera PDF", command=generate_pdf,
+            width=200, height=40, font=ctk.CTkFont(size=14, weight="bold"),
+        ).pack(side="left", padx=(0, 8))
         ctk.CTkButton(
-            button_frame,
-            text="Annulla",
-            command=dialog.destroy,
-            width=100,
-            height=40
-        ).pack(side="left", padx=5, pady=10)
+            btn_frame, text="Annulla", command=dialog.destroy,
+            width=100, height=40,
+        ).pack(side="left")
 
     def on_close(self) -> None:
         if self.backup_job_id:
