@@ -51,15 +51,15 @@ def build_plan_tab(app) -> None:
     ctk.CTkButton(form, text="Salva programmazione", command=app.add_schedule_entry).grid(
         row=3, column=0, columnspan=1, padx=8, pady=(8, 10), sticky="ew"
     )
-    ctk.CTkButton(form, text="Modifica selezionata", command=app.edit_selected_schedule).grid(
-        row=3, column=1, padx=8, pady=(8, 10), sticky="ew"
-    )
+    edit_btn = ctk.CTkButton(form, text="Modifica selezionata", command=app.edit_selected_schedule)
+    app.apply_edit_button_style(edit_btn)
+    edit_btn.grid(row=3, column=1, padx=8, pady=(8, 10), sticky="ew")
     ctk.CTkButton(form, text="Chiudi/Apri", command=app.toggle_schedule_status).grid(
         row=3, column=2, padx=8, pady=(8, 10), sticky="ew"
     )
-    ctk.CTkButton(form, text="Elimina selezionata", command=app.delete_selected_schedule).grid(
-        row=3, column=3, padx=8, pady=(8, 10), sticky="ew"
-    )
+    delete_btn = ctk.CTkButton(form, text="Elimina selezionata", command=app.delete_selected_schedule)
+    app.apply_delete_button_style(delete_btn)
+    delete_btn.grid(row=3, column=3, padx=8, pady=(8, 10), sticky="ew")
 
     list_frame = ctk.CTkFrame(app.tab_plan)
     list_frame.grid(row=1, column=0, padx=8, pady=(0, 8), sticky="nsew")
@@ -327,4 +327,3 @@ def toggle_schedule_status(app) -> None:
         app.on_timesheet_client_change(app.ts_client_combo.get())
     if hasattr(app, "ctrl_tree"):
         app.refresh_control_panel()
-

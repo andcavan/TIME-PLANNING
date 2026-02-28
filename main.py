@@ -81,6 +81,7 @@ class TimesheetApp(ctk.CTk):
         self._projects_sort_reverse = False
         self._activities_sort_col = None
         self._activities_sort_reverse = False
+        self._timesheet_rows_by_id: dict[int, dict] = {}
 
         self.title(f"APP Timesheet v{APP_VERSION}")
         self.geometry("1360x860")
@@ -152,6 +153,30 @@ class TimesheetApp(ctk.CTk):
     def _get_paned_bg(self) -> str:
         """Restituisce il colore di sfondo appropriato per il PanedWindow in base al tema."""
         return "#2b2b2b" if self.is_dark_mode else "#dbdbdb"
+
+    def _get_edit_button_colors(self) -> dict[str, str]:
+        if self.is_dark_mode:
+            return {"fg_color": "#f59e0b", "hover_color": "#d97706"}
+        return {"fg_color": "#d97706", "hover_color": "#b45309"}
+
+    def _get_delete_button_colors(self) -> dict[str, str]:
+        if self.is_dark_mode:
+            return {"fg_color": "#ef4444", "hover_color": "#dc2626"}
+        return {"fg_color": "#dc2626", "hover_color": "#b91c1c"}
+
+    def apply_edit_button_style(self, button: ctk.CTkButton) -> None:
+        button.configure(**self._get_edit_button_colors())
+
+    def apply_delete_button_style(self, button: ctk.CTkButton) -> None:
+        button.configure(**self._get_delete_button_colors())
+
+    def _ensure_combo_option(self, combo: ctk.CTkComboBox, value: str) -> None:
+        if not value:
+            return
+        values = list(combo.cget("values"))
+        if value not in values:
+            values.append(value)
+            combo.configure(values=values)
 
     def _backup_now_and_schedule(self) -> None:
         try:
@@ -514,8 +539,14 @@ class TimesheetApp(ctk.CTk):
 
         button_row = ctk.CTkFrame(form, fg_color="transparent")
         button_row.grid(row=6, column=0, columnspan=2, padx=10, pady=(6, 10), sticky="ew")
-        ctk.CTkButton(button_row, text="Salva ore", command=self.save_timesheet_entry).pack(side="left", padx=(0, 8))
-        ctk.CTkButton(button_row, text="Elimina selezionata", command=self.delete_selected_timesheet).pack(side="left")
+        self.ts_save_button = ctk.CTkButton(button_row, text="Salva ore", command=self.save_timesheet_entry)
+        self.ts_save_button.pack(side="left", padx=(0, 8))
+        self.ts_edit_button = ctk.CTkButton(button_row, text="Modifica selezionata", command=self.edit_selected_timesheet)
+        self.apply_edit_button_style(self.ts_edit_button)
+        self.ts_edit_button.pack(side="left", padx=(0, 8))
+        self.ts_delete_button = ctk.CTkButton(button_row, text="Elimina selezionata", command=self.delete_selected_timesheet)
+        self.apply_delete_button_style(self.ts_delete_button)
+        self.ts_delete_button.pack(side="left")
 
         self.day_total_var = tk.StringVar(value="Totale giornata: 0.00 h | 0.00 EUR")
         ctk.CTkLabel(form, textvariable=self.day_total_var).grid(
@@ -560,6 +591,7 @@ class TimesheetApp(ctk.CTk):
             self.ts_tree.column("note", width=300, anchor="w")
         
         self.ts_tree.grid(row=0, column=0, sticky="nsew")
+        self.ts_tree.bind("<<TreeviewSelect>>", self.on_timesheet_tree_select)
 
         scroll = ttk.Scrollbar(list_frame, orient="vertical", command=self.ts_tree.yview)
         self.ts_tree.configure(yscrollcommand=scroll.set)
@@ -766,6 +798,7 @@ class TimesheetApp(ctk.CTk):
         if not hasattr(self, "ts_tree"):
             return
 
+        self._timesheet_rows_by_id = {}
         for item in self.ts_tree.get_children():
             self.ts_tree.delete(item)
 
@@ -778,6 +811,7 @@ class TimesheetApp(ctk.CTk):
         total_hours = 0.0
         total_cost = 0.0
         for row in rows:
+            self._timesheet_rows_by_id[int(row["id"])] = row
             total_hours += float(row["hours"])
             total_cost += float(row["cost"])
             
@@ -808,6 +842,90 @@ class TimesheetApp(ctk.CTk):
             self.day_total_var.set(f"Totale giornata: {total_hours:.2f} h | {total_cost:.2f} EUR")
         else:
             self.day_total_var.set(f"Totale giornata: {total_hours:.2f} h")
+
+    def on_timesheet_tree_select(self, _event: object) -> None:
+        selection = self.ts_tree.selection()
+        if not selection:
+            return
+
+        entry_id = int(selection[0])
+        row = self._timesheet_rows_by_id.get(entry_id)
+        if not row:
+            return
+
+        client_option = self._entity_option(row["client_id"], row["client_name"])
+        self._ensure_combo_option(self.ts_client_combo, client_option)
+        self.ts_client_combo.set(client_option)
+        self.on_timesheet_client_change(client_option)
+
+        project_option = self._project_option(
+            {
+                "id": row["project_id"],
+                "client_name": row["client_name"],
+                "name": row["project_name"],
+            }
+        )
+        self._ensure_combo_option(self.ts_project_combo, project_option)
+        self.ts_project_combo.set(project_option)
+        self.on_timesheet_project_change(project_option)
+
+        activity_option = self._activity_option(
+            {
+                "id": row["activity_id"],
+                "project_name": row["project_name"],
+                "name": row["activity_name"],
+            }
+        )
+        self._ensure_combo_option(self.ts_activity_combo, activity_option)
+        self.ts_activity_combo.set(activity_option)
+
+        self.ts_hours_entry.delete(0, "end")
+        self.ts_hours_entry.insert(0, f"{float(row['hours']):.2f}")
+        self.ts_note_text.delete("1.0", "end")
+        self.ts_note_text.insert("1.0", row["note"] or "")
+
+    def edit_selected_timesheet(self) -> None:
+        selection = self.ts_tree.selection()
+        if not selection:
+            messagebox.showwarning("Ore giornaliere", "Seleziona una riga da modificare.")
+            return
+
+        entry_id = int(selection[0])
+        try:
+            user_id = self._selected_timesheet_user_id()
+            client_id = self._id_from_option(self.ts_client_combo.get())
+            project_id = self._id_from_option(self.ts_project_combo.get())
+            activity_id = self._id_from_option(self.ts_activity_combo.get())
+            if not (client_id and project_id and activity_id):
+                raise ValueError("Seleziona cliente, commessa e attivita.")
+
+            if not self.is_admin:
+                if not self.db.user_can_access_activity(user_id, project_id, activity_id):
+                    raise ValueError("Non hai i permessi per modificare ore su questa attività.")
+
+            hours = self._to_float(self.ts_hours_entry.get().strip(), "Ore")
+            if hours <= 0:
+                raise ValueError("Ore: il valore deve essere > 0.")
+
+            note = self.ts_note_text.get("1.0", "end").strip()
+            self.db.update_timesheet(
+                entry_id=entry_id,
+                user_id=user_id,
+                is_admin=self.is_admin,
+                work_date=self.selected_date.isoformat(),
+                client_id=client_id,
+                project_id=project_id,
+                activity_id=activity_id,
+                hours=hours,
+                note=note,
+            )
+        except (ValueError, sqlite3.IntegrityError) as exc:
+            messagebox.showerror("Ore giornaliere", str(exc))
+            return
+
+        self.refresh_day_entries()
+        self.refresh_control_panel()
+        messagebox.showinfo("Ore giornaliere", "Voce aggiornata.")
 
     def delete_selected_timesheet(self) -> None:
         selection = self.ts_tree.selection()
@@ -877,10 +995,12 @@ class TimesheetApp(ctk.CTk):
             command=self.pm_new_project
         ).pack(side="left", padx=(0, 5))
         
-        ctk.CTkButton(
+        self.pm_edit_project_btn = ctk.CTkButton(
             buttons_projects, text="✏️ Modifica", width=100,
             command=self.pm_edit_project
-        ).pack(side="left", padx=(0, 10))
+        )
+        self.apply_edit_button_style(self.pm_edit_project_btn)
+        self.pm_edit_project_btn.pack(side="left", padx=(0, 10))
         
         # Switch per mostrare commesse chiuse
         ctk.CTkLabel(buttons_projects, text="Mostra chiuse:").pack(side="left", padx=(10, 5))
@@ -985,6 +1105,7 @@ class TimesheetApp(ctk.CTk):
             buttons_activities, text="✏️ Modifica", width=100,
             command=self.pm_edit_activity_window
         )
+        self.apply_edit_button_style(self.pm_edit_activity_btn)
         self.pm_edit_activity_btn.pack(side="left")
         
         # Campo di ricerca per attività
@@ -2014,8 +2135,13 @@ class TimesheetApp(ctk.CTk):
             save_btn.configure(state="disabled")
         
         if not is_new:
-            delete_btn = ctk.CTkButton(btn_frame, text="Elimina Attività", command=delete_activity, width=120, 
-                         fg_color="#D32F2F")
+            delete_btn = ctk.CTkButton(
+                btn_frame,
+                text="Elimina Attività",
+                command=delete_activity,
+                width=120,
+            )
+            self.apply_delete_button_style(delete_btn)
             delete_btn.pack(side="left", padx=5)
             if is_project_closed:
                 delete_btn.configure(state="disabled")

@@ -46,6 +46,10 @@ def build_users_tab(app) -> None:
 
     app.save_user_button = ctk.CTkButton(form, text="Crea utente", command=app.save_user)
     app.save_user_button.grid(row=1, column=4, padx=8, pady=4, sticky="ew")
+    app.save_user_button_default_style = {
+        "fg_color": app.save_user_button.cget("fg_color"),
+        "hover_color": app.save_user_button.cget("hover_color"),
+    }
 
     # Permessi tab (solo per ruolo user)
     tabs_frame = ctk.CTkFrame(app.tab_users)
@@ -68,7 +72,9 @@ def build_users_tab(app) -> None:
     actions = ctk.CTkFrame(app.tab_users)
     actions.grid(row=2, column=0, padx=8, pady=(0, 8), sticky="ew")
 
-    ctk.CTkButton(actions, text="Modifica utente", command=app.load_user_for_edit).pack(side="left", padx=(10, 6), pady=8)
+    edit_user_btn = ctk.CTkButton(actions, text="Modifica utente", command=app.load_user_for_edit)
+    app.apply_edit_button_style(edit_user_btn)
+    edit_user_btn.pack(side="left", padx=(10, 6), pady=8)
     ctk.CTkButton(actions, text="Annulla modifica", command=app.cancel_user_edit).pack(side="left", padx=6, pady=8)
     ctk.CTkLabel(actions, text="Nuova password utente selezionato").pack(side="left", padx=(20, 6), pady=8)
     app.reset_password_entry = ctk.CTkEntry(actions, width=200)
@@ -254,6 +260,7 @@ def load_user_for_edit(app) -> None:
 
     # Cambia etichetta pulsante
     app.save_user_button.configure(text="Salva modifiche")
+    app.apply_edit_button_style(app.save_user_button)
 
 
 def cancel_user_edit(app) -> None:
@@ -264,6 +271,7 @@ def cancel_user_edit(app) -> None:
     app.new_user_password_entry.delete(0, "end")
     app.new_user_role_combo.set("user")
     app.save_user_button.configure(text="Crea utente")
+    app.save_user_button.configure(**app.save_user_button_default_style)
 
     # Reset checkbox a default
     app.tab_calendar_var.set(True)
@@ -304,4 +312,3 @@ def reset_selected_password(app) -> None:
     app.db.reset_user_password(user_id, new_password)
     app.reset_password_entry.delete(0, "end")
     messagebox.showinfo("Utenti", "Password aggiornata.")
-

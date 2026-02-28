@@ -901,6 +901,44 @@ class Database:
         )
         self.conn.commit()
 
+    def update_timesheet(
+        self,
+        entry_id: int,
+        user_id: int,
+        is_admin: bool,
+        work_date: str,
+        client_id: int,
+        project_id: int,
+        activity_id: int,
+        hours: float,
+        note: str,
+    ) -> None:
+        rate = self.resolve_effective_rate(client_id, project_id, activity_id)
+        cost = round(hours * rate, 2)
+        if is_admin:
+            cursor = self.conn.execute(
+                """
+                UPDATE timesheets
+                SET work_date = ?, client_id = ?, project_id = ?, activity_id = ?,
+                    hours = ?, note = ?, effective_rate = ?, cost = ?
+                WHERE id = ?
+                """,
+                (work_date, client_id, project_id, activity_id, hours, note.strip(), rate, cost, entry_id),
+            )
+        else:
+            cursor = self.conn.execute(
+                """
+                UPDATE timesheets
+                SET work_date = ?, client_id = ?, project_id = ?, activity_id = ?,
+                    hours = ?, note = ?, effective_rate = ?, cost = ?
+                WHERE id = ? AND user_id = ?
+                """,
+                (work_date, client_id, project_id, activity_id, hours, note.strip(), rate, cost, entry_id, user_id),
+            )
+        if cursor.rowcount == 0:
+            raise ValueError("Voce ore non trovata o non autorizzata.")
+        self.conn.commit()
+
     def delete_timesheet(self, entry_id: int, user_id: int, is_admin: bool) -> None:
         if is_admin:
             self.conn.execute("DELETE FROM timesheets WHERE id = ?", (entry_id,))
@@ -920,7 +958,8 @@ class Database:
 
         return self._fetchall(
             f"""
-            SELECT t.id, t.work_date, t.hours, t.note, t.effective_rate, t.cost,
+            SELECT t.id, t.user_id, t.client_id, t.project_id, t.activity_id,
+                   t.work_date, t.hours, t.note, t.effective_rate, t.cost,
                    u.username,
                    c.name AS client_name,
                    p.name AS project_name,

@@ -87,6 +87,7 @@ def open_clients_management_dialog(app) -> None:
                 messagebox.showinfo("Gestione Clienti", "Cliente modificato con successo.")
                 editing_client_id[0] = None
                 save_btn.configure(text="Aggiungi Cliente")
+                save_btn.configure(**save_btn_default_style)
 
             client_name_entry.delete(0, "end")
             client_referente_entry.delete(0, "end")
@@ -135,6 +136,7 @@ def open_clients_management_dialog(app) -> None:
             client_notes_entry.delete(0, "end")
             client_notes_entry.insert(0, client.get("notes", ""))
             save_btn.configure(text="Salva Modifiche")
+            app.apply_edit_button_style(save_btn)
 
     def delete_client():
         selected_items = clients_tree.selection()
@@ -185,9 +187,17 @@ def open_clients_management_dialog(app) -> None:
 
     save_btn = ctk.CTkButton(btn_frame, text="Aggiungi Cliente", command=add_or_update_client, width=120)
     save_btn.pack(side="left", padx=5)
+    save_btn_default_style = {
+        "fg_color": save_btn.cget("fg_color"),
+        "hover_color": save_btn.cget("hover_color"),
+    }
 
-    ctk.CTkButton(btn_frame, text="Modifica Selezionato", command=load_client_for_edit, width=140).pack(side="left", padx=5)
-    ctk.CTkButton(btn_frame, text="Elimina Selezionato", command=delete_client, width=140).pack(side="left", padx=5)
+    edit_btn = ctk.CTkButton(btn_frame, text="Modifica Selezionato", command=load_client_for_edit, width=140)
+    app.apply_edit_button_style(edit_btn)
+    edit_btn.pack(side="left", padx=5)
+    delete_btn = ctk.CTkButton(btn_frame, text="Elimina Selezionato", command=delete_client, width=140)
+    app.apply_delete_button_style(delete_btn)
+    delete_btn.pack(side="left", padx=5)
 
     # Lista clienti
     list_frame = ctk.CTkFrame(popup)
@@ -231,4 +241,3 @@ def open_clients_management_dialog(app) -> None:
     scroll.grid(row=0, column=1, sticky="ns")
 
     refresh_clients_list()
-

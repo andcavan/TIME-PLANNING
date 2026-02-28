@@ -277,11 +277,13 @@ def open_project_management_dialog(app) -> None:
     else:
         # Salva modifiche abilitato solo se aperta
         save_btn = ctk.CTkButton(btn_frame, text="Salva Modifiche", command=save_project, width=150)
+        app.apply_edit_button_style(save_btn)
         save_btn.pack(side="left", padx=5)
         if is_closed:
             save_btn.configure(state="disabled")
 
-        delete_btn = ctk.CTkButton(btn_frame, text="🗑️ Elimina Commessa", command=delete_project, width=150, fg_color="#D32F2F")
+        delete_btn = ctk.CTkButton(btn_frame, text="🗑️ Elimina Commessa", command=delete_project, width=150)
+        app.apply_delete_button_style(delete_btn)
         delete_btn.pack(side="left", padx=5)
         if is_closed:
             delete_btn.configure(state="disabled")
@@ -337,4 +339,3 @@ def open_project_management_dialog(app) -> None:
             open_btn.configure(state="disabled")
 
     ctk.CTkButton(btn_frame, text="Annulla", command=popup.destroy, width=100).pack(side="left", padx=5)
-

@@ -80,8 +80,12 @@ def build_diary_tab(app) -> None:
     btn_frame.grid(row=2, column=0, padx=8, pady=8, sticky="ew")
 
     ctk.CTkButton(btn_frame, text="✓ Completa/Riapri", width=140, command=app._diary_toggle_completed).pack(side="left", padx=4)
-    ctk.CTkButton(btn_frame, text="✏️ Modifica", width=100, command=app._diary_edit_entry).pack(side="left", padx=4)
-    ctk.CTkButton(btn_frame, text="🗑️ Elimina", width=100, fg_color="#c62828", hover_color="#b71c1c", command=app._diary_delete_entry).pack(side="left", padx=4)
+    edit_btn = ctk.CTkButton(btn_frame, text="✏️ Modifica", width=100, command=app._diary_edit_entry)
+    app.apply_edit_button_style(edit_btn)
+    edit_btn.pack(side="left", padx=4)
+    delete_btn = ctk.CTkButton(btn_frame, text="🗑️ Elimina", width=100, command=app._diary_delete_entry)
+    app.apply_delete_button_style(delete_btn)
+    delete_btn.pack(side="left", padx=4)
 
     # Popola combo clienti
     app._diary_populate_combos()
@@ -395,4 +399,3 @@ def diary_open_editor(app, entry_id: int | None) -> None:
             messagebox.showerror("Errore", str(exc))
 
     ctk.CTkButton(dialog, text="Salva", width=120, command=save).pack(pady=16)
-
