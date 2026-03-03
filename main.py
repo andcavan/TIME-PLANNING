@@ -478,7 +478,7 @@ class TimesheetApp(ctk.CTk):
         self.cal_year_combo.pack(side="left", padx=6, pady=10)
         self.cal_year_combo.set(str(self.selected_date.year))
 
-        ctk.CTkButton(header, text="Mostra", width=90, command=self.render_calendar).pack(side="left", padx=12, pady=10)
+        ctk.CTkButton(header, text="Mostra", width=90, command=self.show_selected_month).pack(side="left", padx=12, pady=10)
         
         ctk.CTkButton(header, text="◄", width=35, command=self.goto_prev_month).pack(side="left", padx=2, pady=10)
         ctk.CTkButton(header, text="Oggi", width=70, command=self.goto_today).pack(side="left", padx=2, pady=10)
@@ -597,6 +597,34 @@ class TimesheetApp(ctk.CTk):
         self.ts_tree.configure(yscrollcommand=scroll.set)
         scroll.grid(row=0, column=1, sticky="ns")
 
+    def _clear_timesheet_form(self) -> None:
+        if not hasattr(self, "ts_client_combo"):
+            return
+
+        self.ts_client_combo.set("")
+        self.on_timesheet_client_change("")
+        self.ts_hours_entry.delete(0, "end")
+        self.ts_note_text.delete("1.0", "end")
+
+        if hasattr(self, "ts_tree"):
+            selection = self.ts_tree.selection()
+            if selection:
+                self.ts_tree.selection_remove(*selection)
+
+    def _set_calendar_date(self, new_date: date) -> None:
+        date_changed = new_date != self.selected_date
+        self.selected_date = new_date
+        if date_changed:
+            self._clear_timesheet_form()
+        self.render_calendar()
+
+    def show_selected_month(self) -> None:
+        year = int(self.cal_year_combo.get())
+        month = int(self.cal_month_combo.get())
+        max_day = calendar.monthrange(year, month)[1]
+        day = min(self.selected_date.day, max_day)
+        self._set_calendar_date(date(year, month, day))
+
     def goto_prev_month(self) -> None:
         """Vai al mese precedente."""
         year = int(self.cal_year_combo.get())
@@ -610,15 +638,16 @@ class TimesheetApp(ctk.CTk):
         
         self.cal_month_combo.set(f"{month:02d}")
         self.cal_year_combo.set(str(year))
-        self.render_calendar()
+        max_day = calendar.monthrange(year, month)[1]
+        day = min(self.selected_date.day, max_day)
+        self._set_calendar_date(date(year, month, day))
     
     def goto_today(self) -> None:
         """Vai al mese corrente (oggi)."""
         today = date.today()
         self.cal_month_combo.set(f"{today.month:02d}")
         self.cal_year_combo.set(str(today.year))
-        self.selected_date = today
-        self.render_calendar()
+        self._set_calendar_date(today)
     
     def goto_next_month(self) -> None:
         """Vai al mese successivo."""
@@ -633,7 +662,9 @@ class TimesheetApp(ctk.CTk):
         
         self.cal_month_combo.set(f"{month:02d}")
         self.cal_year_combo.set(str(year))
-        self.render_calendar()
+        max_day = calendar.monthrange(year, month)[1]
+        day = min(self.selected_date.day, max_day)
+        self._set_calendar_date(date(year, month, day))
 
     def render_calendar(self) -> None:
         for child in self.calendar_frame.winfo_children():
@@ -719,8 +750,7 @@ class TimesheetApp(ctk.CTk):
     def select_calendar_day(self, day_num: int) -> None:
         year = int(self.cal_year_combo.get())
         month = int(self.cal_month_combo.get())
-        self.selected_date = date(year, month, day_num)
-        self.render_calendar()
+        self._set_calendar_date(date(year, month, day_num))
 
     def _selected_timesheet_user_id(self) -> int:
         """Restituisce sempre l'ID dell'utente corrente loggato."""
@@ -2206,7 +2236,7 @@ class TimesheetApp(ctk.CTk):
         
         # Aggiorna combo solo se le tab corrispondenti sono abilitate
         if hasattr(self, 'ts_client_combo'):
-            self._set_combo_values(self.ts_client_combo, client_values)
+            self._set_combo_values(self.ts_client_combo, [""] + client_values)
         if hasattr(self, 'project_client_combo'):
             self._set_combo_values(self.project_client_combo, client_values)
         

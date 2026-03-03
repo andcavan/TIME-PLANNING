@@ -1,4 +1,4 @@
-# APP Timesheet - v3.6.10
+# APP Timesheet - v3.6.11
 
 Applicazione desktop Python con UI `customtkinter` per:
 
@@ -7,6 +7,11 @@ Applicazione desktop Python con UI `customtkinter` per:
 - gestione programmazione ore su commessa/attivita
 - strumenti di controllo (consuntivo, pianificato, costi, scostamenti)
 - piattaforma multiutente con ruoli `admin` e `user`
+
+## Novita v3.6.11
+
+- tab Calendario Ore: al cambio giorno il form viene azzerato automaticamente, evitando che restino cliente, commessa, attivita, ore e note del giorno precedente.
+- tab Calendario Ore: mantenuta l'opzione vuota nel combo cliente per consentire il reset completo del form.
 
 ## Novita v3.6.10
 
