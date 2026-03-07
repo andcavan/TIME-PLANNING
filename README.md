@@ -1,12 +1,73 @@
-# APP Timesheet - v3.6.11
+# APP Timesheet - v3.7.8
 
-Applicazione desktop Python con UI `customtkinter` per:
+Applicazione desktop Python con UI `PyQt6` per:
 
 - inserimento ore giornaliere da calendario
 - gestione anagrafiche `cliente > commessa > attivita`
 - gestione programmazione ore su commessa/attivita
 - strumenti di controllo (consuntivo, pianificato, costi, scostamenti)
 - piattaforma multiutente con ruoli `admin` e `user`
+
+## Novita v3.7.8
+
+- calendario: intestazioni giorni settimana e numeri settimana aggiornate a grigio piu scuro.
+- calendario: testo intestazioni impostato bianco per miglior contrasto.
+
+## Novita v3.7.7
+
+- calendario: fix strutturale della griglia interna (`qt_calendar_calendarview`) con resize `Fixed` al posto di `Stretch`.
+- riga giorni settimana e colonna numero settimana ora vengono ridimensionate realmente (non solo via CSS).
+- intestazioni (giorni + numeri settimana) forzate con sfondo grigio e testo nero bold grande per maggiore leggibilita.
+
+## Novita v3.7.6
+
+- calendario: intestazioni giorni settimana e numeri settimana con testo nero, grassetto e piu grande.
+- calendario: sfondo intestazioni impostato su grigio piu visibile.
+- calendario: ulteriore riduzione dimensioni intestazioni (`riga giorni` a `9px`, `colonna settimane` a `16px`).
+
+## Novita v3.7.5
+
+- calendario: riga giorni settimana (`Lun`, `Mar`, `Mer`...) impostata a meta altezza del layout standard (`10px`).
+- calendario: testo intestazione giorni aumentato e reso piu leggibile (font piu grande e bold).
+
+## Novita v3.7.4
+
+- calendario: riga superiore dei giorni settimana ridotta a meta dell’altezza precedente.
+- mantenuto sfondo grigio per la riga giorni della settimana.
+
+## Novita v3.7.3
+
+- calendario: se viene selezionata la data odierna, prevale il colore giallo di selezione.
+- sabato e domenica evidenziati con celle rosse.
+- riga giorni della settimana ridotta in altezza e resa grigio chiaro.
+- colonna numero settimana ridotta in larghezza e resa grigio chiaro.
+- ore inserite nel giorno rese piu evidenti con badge dedicato dentro la cella.
+
+## Novita v3.7.2
+
+- ripristinata la logica di gestione commesse/attivita del riferimento base (`eca9f0ac0b1ba7d0f7d4ece8f8da1f57fbcebb82`) mantenendo UI `PyQt6`.
+- popup commessa con campi completi: nome, referente, costo, note, descrizione, data inizio/fine, ore preventivate e budget.
+- popup attivita con campi completi: nome, tariffa, note, data inizio/fine, ore preventivate e budget.
+- ripristinata la gestione pianificazione in salvataggio/modifica (creazione, aggiornamento, eventuale eliminazione schedule).
+- ripristinati warning di coerenza attivita rispetto ai limiti della commessa (date, ore, budget).
+- abilitato doppio click su riga commessa e riga attivita per aprire direttamente la modifica.
+- tab separata `Programmazione` rimossa dalla UI principale per riallineamento al comportamento della versione base.
+
+## Novita v3.7.1
+
+- calendario ore PyQt6 riallineato al comportamento base del commit `eca9f0ac0b1ba7d0f7d4ece8f8da1f57fbcebb82` per la gestione visuale giornaliera.
+- intestazione giorni settimana e colonna numero settimana con tono colore dedicato (diverso dal corpo calendario).
+- ridotta altezza riga giorni settimana e ridotta larghezza colonna numero settimana.
+- giorno corrente sempre evidenziato in blu.
+- giorno selezionato evidenziato in giallo.
+- nelle celle giorno ora viene mostrato il totale ore (`xh`) registrato per quel giorno.
+
+## Novita v3.7.0
+
+- migrazione UI da `customtkinter` a `PyQt6`, mantenendo logica e operazioni su `db.py`.
+- struttura principale ora in stile `QMainWindow` con tab laterali (come `PDM-SW-2`), login dedicato e tema dark/light.
+- portati su PyQt6 i flussi principali: calendario ore, gestione commesse/attivita/clienti, programmazione, controllo, diario e utenti.
+- dialog report PDF migrato su PyQt6 con gli stessi filtri operativi (cliente/commessa/attivita/utente/periodo).
 
 ## Novita v3.6.11
 
