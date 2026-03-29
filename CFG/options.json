@@ -1,4 +1,8 @@
 {
   "db_folder": "C:/Users/prog3/Desktop/APP MECCANICA/TIME-PLANNING/CFG",
-  "cfg_folder": "C:/Users/prog3/Desktop/APP MECCANICA/TIME-PLANNING/CFG"
+  "cfg_folder": "C:/Users/prog3/Desktop/APP MECCANICA/TIME-PLANNING/CFG",
+  "backup_folder": "C:/Users/prog3/Desktop/APP MECCANICA/TIME-PLANNING/CFG/backups",
+  "backup_interval_minutes": 360,
+  "backup_keep_files": 30,
+  "backup_mode": "auto+close"
 }

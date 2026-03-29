@@ -1,7 +1,10 @@
 {
   "permissions": {
     "allow": [
-      "Read(//c/Users/prog3/Desktop/**)"
+      "Read(//c/Users/prog3/Desktop/**)",
+      "Bash(grep -E \"\\\\.py$|\\\\.json$|\\\\.txt$\")",
+      "Bash(rm APP-Timesheet-v3.4.6.spec APP-Timesheet-v3.5.0.spec APP-Timesheet-v3.6.9.spec APP-Timesheet-v3.6.10.spec APP-Timesheet-v3.6.11.spec _main_base_eca9f0a.py _main_base_eca9f0a_utf8.py debug.log build.ps1)",
+      "Bash(rm -rf __pycache__)"
     ]
   }
 }

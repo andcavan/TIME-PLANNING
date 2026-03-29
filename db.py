@@ -91,9 +91,13 @@ class Database:
     def __init__(self, db_path: str | Path = DEFAULT_DB_PATH) -> None:
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(self.db_path)
+        self.conn = sqlite3.connect(self.db_path, timeout=10)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys = ON;")
+        self.conn.execute("PRAGMA journal_mode = WAL;")
+        self.conn.execute("PRAGMA busy_timeout = 5000;")
+        self.backup_dir: Path = BACKUP_DIR
+        self.backup_keep: int = AUTO_BACKUP_KEEP_FILES
         self._create_schema()
         self._seed_admin()
 
@@ -104,21 +108,21 @@ class Database:
         if not self.db_path.exists():
             return None
 
-        BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+        self.backup_dir.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        backup_path = BACKUP_DIR / f"{self.db_path.stem}_{timestamp}.db"
+        backup_path = self.backup_dir / f"{self.db_path.stem}_{timestamp}.db"
         with sqlite3.connect(backup_path) as backup_conn:
             self.conn.backup(backup_conn)
         self._cleanup_backups()
         return backup_path
 
-    def _cleanup_backups(self, max_files: int = AUTO_BACKUP_KEEP_FILES) -> None:
+    def _cleanup_backups(self) -> None:
         backups = sorted(
-            BACKUP_DIR.glob(f"{self.db_path.stem}_*.db"),
+            self.backup_dir.glob(f"{self.db_path.stem}_*.db"),
             key=lambda p: p.stat().st_mtime,
             reverse=True,
         )
-        for old_backup in backups[max_files:]:
+        for old_backup in backups[self.backup_keep:]:
             try:
                 old_backup.unlink()
             except OSError:

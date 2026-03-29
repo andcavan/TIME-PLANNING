@@ -24,6 +24,8 @@ Le regole locali di progetto possono sovrascrivere queste istruzioni.
 - Preserva lo stile gia presente nel progetto.
 - Prima di chiudere, fai almeno un controllo rapido (sintassi/test locali se disponibili).
 - Tieni monitorata la lunghezza dei files, se troppo lunghi attiva logiche di segmentazione.
+- se presente aggiorna sempre il manuale dell'app
+- aggiornare sempre il file readme con descrizione modifica o aggiunta, versione e date
 
 
 ## Output

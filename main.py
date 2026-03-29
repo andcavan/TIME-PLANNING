@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Any
 
 import json
-import os
 
 from PyQt6.QtCore import QDate, QTimer, Qt
 from PyQt6.QtGui import QAction, QColor
@@ -45,9 +44,10 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
     QTableView,
+    QSpinBox,
 )
 
-from db import AUTO_BACKUP_INTERVAL_MINUTES, CFG_DIR, Database
+from db import AUTO_BACKUP_INTERVAL_MINUTES, AUTO_BACKUP_KEEP_FILES, CFG_DIR, Database
 from pdf_reports import PDFReportGenerator
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -412,12 +412,261 @@ QCalendarWidget QTableView QHeaderView::section:vertical {{
         painter.restore()
 
 
+_MANUALE_HTML = """
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body  { font-family: Segoe UI, Arial, sans-serif; font-size: 13px; margin: 20px; background: #ffffff; color: #1f2937; }
+  h1    { font-size: 20px; color: #1f2937; border-bottom: 2px solid #2563eb; padding-bottom: 6px; }
+  h2    { font-size: 15px; color: #2563eb; margin-top: 22px; border-left: 4px solid #2563eb; padding-left: 8px; }
+  h3    { font-size: 13px; color: #374151; margin-top: 14px; }
+  table { border-collapse: collapse; width: 100%; margin-top: 8px; }
+  th    { background: #2563eb; color: #ffffff; padding: 5px 8px; text-align: left; }
+  td    { border: 1px solid #c0c8d8; padding: 4px 8px; background: #ffffff; color: #1f2937; }
+  tr:nth-child(even) td { background: #eef2f9; color: #1f2937; }
+  kbd   { background:#e8eaf0; color:#1f2937; border:1px solid #bbb; border-radius:3px; padding:1px 5px; font-size:12px; }
+  .note { background:#fffbe6; color:#7c4a00; border-left:4px solid #f59e0b; padding:6px 10px; margin:8px 0; }
+  ul    { margin-top: 4px; }
+</style>
+</head>
+<body>
+
+<h1>APP Timesheet — Manuale Utente</h1>
+<p>Versione applicazione: <b>{version}</b><br>
+Software per la gestione delle ore lavorative, commesse, attività e risorse.</p>
+
+<!-- ═══════════════════════════════════════════════ CONFIGURAZIONE -->
+<h2>1. Configurazione iniziale</h2>
+
+<h3>1.1 Primo avvio</h3>
+<p>Al primo avvio vengono richieste due cartelle:</p>
+<table>
+<tr><th>Cartella</th><th>Descrizione</th></tr>
+<tr><td><b>Cartella di configurazione</b></td><td>Dove vengono salvati i file di impostazioni (<code>options.json</code>, <code>last_user.txt</code>).</td></tr>
+<tr><td><b>Cartella del database</b></td><td>Dove si trova (o verrà creato) il file <code>timesheet.db</code>.</td></tr>
+</table>
+<p>Se si annulla, vengono usate le cartelle predefinite nella directory dell'applicazione (<code>CFG/</code>).</p>
+
+<h3>1.2 Uso in rete (multi-utente)</h3>
+<p>Per consentire l'accesso a più utenti (5–8 postazioni) è sufficiente:</p>
+<ol>
+  <li>Posizionare il file <code>timesheet.db</code> in una <b>cartella condivisa</b> di rete (es. share SMB/NAS).</li>
+  <li>Su ogni PC, andare in <b>Preferenze &rarr; Opzioni</b> e impostare la <b>Cartella DB</b> al percorso di rete (es. <code>\\\\server\\condivisa</code>).</li>
+  <li>Riavviare l'applicazione.</li>
+</ol>
+<div class="note">Il database usa la modalità WAL (Write-Ahead Logging) per gestire accessi concorrenti. Consigliato per uso non simultaneo intensivo; per scritture frequenti e contemporanee valutare un server database dedicato.</div>
+
+<h3>1.3 Modificare le cartelle in seguito</h3>
+<p>Andare in <b>Preferenze → Opzioni</b>. Le modifiche sono applicate al prossimo avvio.</p>
+
+<!-- ═══════════════════════════════════════════════ LOGIN -->
+<h2>2. Accesso all'applicazione</h2>
+<p>All'avvio appare la schermata di login. Inserire <b>Username</b> e <b>Password</b> e premere <b>Accedi</b>.</p>
+<table>
+<tr><th>Credenziali default</th><th>Valore</th></tr>
+<tr><td>Username</td><td><code>admin</code></td></tr>
+<tr><td>Password</td><td><code>admin</code></td></tr>
+</table>
+<div class="note">Cambiare la password admin al primo accesso tramite <b>Preferenze → Gestione Utenti</b>.</div>
+
+<!-- ═══════════════════════════════════════════════ MENU BAR -->
+<h2>3. Barra dei menu</h2>
+<table>
+<tr><th>Menu</th><th>Voce</th><th>Funzione</th></tr>
+<tr><td rowspan="2"><b>File</b></td><td>Logout</td><td>Chiude la sessione corrente e torna alla schermata di login.</td></tr>
+<tr><td>Esci</td><td>Chiude l'applicazione.</td></tr>
+<tr><td rowspan="2"><b>Preferenze</b></td><td>Gestione Utenti</td><td>Apre il pannello per creare, modificare e gestire gli account (solo admin).</td></tr>
+<tr><td>Opzioni</td><td>Permette di impostare le cartelle del database e dei file di configurazione.</td></tr>
+<tr><td><b>Visualizzazione</b></td><td>Tema</td><td>Alterna tra tema scuro e tema chiaro.</td></tr>
+<tr><td rowspan="2"><b>Aiuto</b></td><td>Informazioni</td><td>Mostra la versione dell'applicazione.</td></tr>
+<tr><td>Manuale</td><td>Apre questo manuale.</td></tr>
+</table>
+
+<!-- ═══════════════════════════════════════════════ CALENDARIO ORE -->
+<h2>4. Calendario Ore</h2>
+<p>Sezione principale per l'inserimento delle ore lavorative giornaliere.</p>
+
+<h3>4.1 Navigazione</h3>
+<table>
+<tr><th>Controllo</th><th>Funzione</th></tr>
+<tr><td>Combo Mese / Anno</td><td>Selezione rapida del periodo da visualizzare.</td></tr>
+<tr><td>Pulsante <b>Mostra</b></td><td>Aggiorna il calendario al mese/anno selezionato.</td></tr>
+<tr><td>Pulsanti <b>&lt;</b> / <b>Oggi</b> / <b>&gt;</b></td><td>Naviga al mese precedente, alla data odierna o al mese successivo.</td></tr>
+<tr><td>Click su un giorno</td><td>Seleziona il giorno per visualizzare/inserire le ore.</td></tr>
+</table>
+<p>I giorni con ore registrate mostrano un <b>badge colorato</b> con il totale delle ore.</p>
+
+<h3>4.2 Inserimento ore</h3>
+<ol>
+  <li>Selezionare un giorno nel calendario.</li>
+  <li>Scegliere <b>Cliente</b>, <b>Commessa</b> e <b>Attività</b> dai menu a tendina.</li>
+  <li>Inserire le <b>Ore</b> (es. <code>8</code> o <code>7.5</code>).</li>
+  <li>Aggiungere eventuali <b>Note</b>.</li>
+  <li>Premere <b>Salva ore</b>.</li>
+</ol>
+
+<h3>4.3 Modifica / Eliminazione</h3>
+<ul>
+  <li>Selezionare una riga nella tabella inferiore.</li>
+  <li><b>Modifica selezionata</b>: carica i dati nel form per modificarli, poi premere <b>Salva ore</b>.</li>
+  <li><b>Elimina selezionata</b>: rimuove definitivamente la riga selezionata.</li>
+</ul>
+
+<h3>4.4 Visualizzazione admin</h3>
+<p>Gli utenti con ruolo <b>admin</b> vedono le colonne <b>Tariffa</b> e <b>Costo</b> nella tabella delle ore.</p>
+
+<!-- ═══════════════════════════════════════════════ GESTIONE COMMESSE -->
+<h2>5. Gestione Commesse</h2>
+<p>Gestione della gerarchia <b>Cliente → Commessa → Attività</b>.</p>
+
+<h3>5.1 Clienti</h3>
+<table>
+<tr><th>Pulsante</th><th>Funzione</th></tr>
+<tr><td>Nuovo cliente</td><td>Apre il form per creare un nuovo cliente (nome, referente, telefono, email, tariffa oraria, note).</td></tr>
+<tr><td>Modifica cliente</td><td>Modifica il cliente selezionato nel menu a tendina.</td></tr>
+<tr><td>Elimina cliente</td><td>Elimina il cliente (solo se non ha commesse associate).</td></tr>
+</table>
+
+<h3>5.2 Commesse</h3>
+<table>
+<tr><th>Pulsante</th><th>Funzione</th></tr>
+<tr><td>Nuova commessa</td><td>Crea una commessa per il cliente selezionato (nome, referente, descrizione, tariffa, date, ore pianificate, budget).</td></tr>
+<tr><td>Modifica</td><td>Modifica la commessa selezionata.</td></tr>
+<tr><td>Elimina</td><td>Elimina la commessa selezionata.</td></tr>
+<tr><td>Chiudi / Apri</td><td>Cambia lo stato della commessa tra <em>aperta</em> e <em>chiusa</em>. Le commesse chiuse sono nascoste per default (spuntare "Mostra chiuse" per vederle).</td></tr>
+</table>
+<p>Il doppio click su una commessa apre il dettaglio con il riepilogo.</p>
+
+<h3>5.3 Attività</h3>
+<p>Selezionare una commessa per visualizzarne le attività. Usare i pulsanti <b>Nuova attività</b>, <b>Modifica</b>, <b>Elimina</b> nel pannello di destra.</p>
+
+<h3>5.4 Filtro commesse</h3>
+<p>Digitare nel campo <b>Filtra commesse...</b> per cercare per nome in tempo reale.</p>
+
+<!-- ═══════════════════════════════════════════════ CONTROLLO -->
+<h2>6. Controllo</h2>
+<p>Pannello di analisi budget e avanzamento per tutte le commesse.</p>
+<ul>
+  <li>Visualizzazione ad albero: <b>Cliente → Commessa → Attività</b>.</li>
+  <li>Per ogni nodo vengono mostrati: <b>ore pianificate</b>, <b>ore consuntivate</b>, <b>budget</b>, <b>costo effettivo</b> e <b>scostamento</b>.</li>
+  <li>Usare il pulsante <b>Aggiorna</b> per ricaricare i dati.</li>
+</ul>
+
+<!-- ═══════════════════════════════════════════════ DIARIO -->
+<h2>7. Diario</h2>
+<p>Gestione note, promemoria e attività collegate a clienti/commesse.</p>
+
+<h3>7.1 Creare una nota</h3>
+<ol>
+  <li>Premere <b>Nuova nota</b>.</li>
+  <li>Scegliere priorità (Alta / Media / Bassa), contenuto e data promemoria opzionale.</li>
+  <li>Salvare.</li>
+</ol>
+
+<h3>7.2 Filtri</h3>
+<p>È possibile filtrare le note per <b>Cliente</b>, <b>Commessa</b>, <b>Attività</b> e spuntare <b>Mostra completati</b> per includere o escludere le voci già chiuse.</p>
+
+<h3>7.3 Azioni</h3>
+<table>
+<tr><th>Pulsante</th><th>Funzione</th></tr>
+<tr><td>Completa / Riapri</td><td>Cambia lo stato della nota selezionata.</td></tr>
+<tr><td>Modifica</td><td>Apre la nota in modifica (anche doppio click).</td></tr>
+<tr><td>Elimina</td><td>Elimina definitivamente la nota.</td></tr>
+</table>
+<div class="note">All'avvio, se ci sono promemoria con scadenza odierna o passata non completati, viene mostrato un avviso nella barra superiore.</div>
+
+<!-- ═══════════════════════════════════════════════ GESTIONE UTENTI -->
+<h2>8. Gestione Utenti <span style="font-size:11px;color:#888;">(solo Admin)</span></h2>
+<p>Accessibile da <b>Preferenze → Gestione Utenti</b>.</p>
+
+<h3>8.1 Creare un nuovo utente</h3>
+<ol>
+  <li>Compilare <b>Username</b>, <b>Nome completo</b>, <b>Ruolo</b> e <b>Password</b>.</li>
+  <li>Premere <b>Crea utente</b>.</li>
+</ol>
+
+<h3>8.2 Modificare un utente esistente</h3>
+<ol>
+  <li>Selezionare l'utente nella tabella.</li>
+  <li>Premere <b>Modifica utente</b>: i dati vengono caricati nel form.</li>
+  <li>Modificare i campi e premere <b>Crea utente</b> (che diventa "Salva modifiche").</li>
+  <li>Per annullare la modifica premere <b>Annulla modifica</b>.</li>
+</ol>
+
+<h3>8.3 Reset password</h3>
+<p>Selezionare l'utente, digitare la nuova password nel campo <b>Nuova password</b> e premere <b>Reset password</b>.</p>
+
+<h3>8.4 Attivare / Disattivare un utente</h3>
+<p>Selezionare l'utente e premere <b>Attiva/Disattiva</b>. Un utente disattivato non può accedere.</p>
+
+<h3>8.5 Permessi tab</h3>
+<p>Selezionare un utente e spuntare/deselezionare i tab visibili (<b>Calendario Ore</b>, <b>Gestione Commesse</b>, <b>Controllo</b>), poi premere <b>Salva permessi</b>. Le modifiche sono applicate al prossimo login dell'utente.</p>
+
+<!-- ═══════════════════════════════════════════════ REPORT PDF -->
+<h2>9. Report PDF</h2>
+<p>Genera report di analisi in formato PDF.</p>
+<ul>
+  <li>Applicare filtri per <b>Cliente</b>, <b>Commessa</b>, <b>Attività</b>, <b>Utente</b> e <b>Periodo</b>.</li>
+  <li>Scegliere il tipo di report dal menu a tendina.</li>
+  <li>Premere <b>Genera PDF</b> e indicare dove salvare il file.</li>
+</ul>
+
+<!-- ═══════════════════════════════════════════════ BACKUP -->
+<h2>10. Backup automatico</h2>
+<p>L'applicazione esegue un backup automatico del database ogni <b>6 ore</b> nella cartella <code>CFG/backups/</code>. Vengono mantenuti i <b>30 backup più recenti</b>; i precedenti vengono eliminati automaticamente.</p>
+<p>I file di backup hanno nome <code>timesheet_YYYYMMDD_HHMMSS.db</code>.</p>
+
+<!-- ═══════════════════════════════════════════════ NOTE TECNICHE -->
+<h2>11. Note tecniche</h2>
+<table>
+<tr><th>Componente</th><th>Dettaglio</th></tr>
+<tr><td>Database</td><td>SQLite 3 con WAL mode e busy_timeout 5 s</td></tr>
+<tr><td>Interfaccia</td><td>PyQt6</td></tr>
+<tr><td>Report</td><td>ReportLab (PDF)</td></tr>
+<tr><td>Backup</td><td>Ogni 6 ore, max 30 file</td></tr>
+<tr><td>Cartella dati default</td><td><code>CFG/</code> nella directory dell'applicazione</td></tr>
+</table>
+
+</body>
+</html>
+"""
+
+
+class ManualeDialog(QDialog):
+    """Finestra del manuale utente con navigazione a indice."""
+
+    def __init__(self, version: str, parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Manuale Utente — APP Timesheet")
+        self.setMinimumSize(860, 680)
+        self.resize(960, 720)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        from PyQt6.QtWidgets import QTextBrowser
+        self.browser = QTextBrowser()
+        self.browser.setOpenExternalLinks(False)
+        self.browser.setHtml(_MANUALE_HTML.replace("{version}", version))
+        layout.addWidget(self.browser)
+
+        btn_row = QHBoxLayout()
+        btn_row.setContentsMargins(10, 6, 10, 8)
+        btn_row.addStretch(1)
+        btn_close = QPushButton("Chiudi")
+        btn_close.clicked.connect(self.accept)
+        btn_row.addWidget(btn_close)
+        layout.addLayout(btn_row)
+
+
 class OpzioniDialog(QDialog):
     """Dialog per configurare percorsi DB e cartella configurazione."""
 
     OPTIONS_FILE = CFG_DIR / "options.json"
 
-    def __init__(self, parent=None) -> None:
+    def __init__(self, parent=None, show_backup_tab: bool = True) -> None:
         super().__init__(parent)
         self.setWindowTitle("Opzioni")
         self.setMinimumWidth(500)
@@ -425,9 +674,13 @@ class OpzioniDialog(QDialog):
         opts = self._load_options()
 
         layout = QVBoxLayout(self)
+        tabs = QTabWidget()
+
+        # --- Tab Percorsi ---
+        percorsi_widget = QWidget()
+        percorsi_layout = QVBoxLayout(percorsi_widget)
         form = QFormLayout()
 
-        # Percorso cartella DB
         db_row = QHBoxLayout()
         self.db_path_edit = QLineEdit(opts.get("db_folder", ""))
         self.db_path_edit.setPlaceholderText("Cartella del database (vuoto = default)")
@@ -437,7 +690,6 @@ class OpzioniDialog(QDialog):
         db_row.addWidget(browse_db)
         form.addRow("Cartella DB:", db_row)
 
-        # Percorso cartella config
         cfg_row = QHBoxLayout()
         self.cfg_path_edit = QLineEdit(opts.get("cfg_folder", ""))
         self.cfg_path_edit.setPlaceholderText("Cartella configurazione (vuoto = default)")
@@ -447,7 +699,56 @@ class OpzioniDialog(QDialog):
         cfg_row.addWidget(browse_cfg)
         form.addRow("Cartella Config:", cfg_row)
 
-        layout.addLayout(form)
+        percorsi_layout.addLayout(form)
+        percorsi_layout.addStretch()
+        tabs.addTab(percorsi_widget, "Percorsi")
+
+        # --- Tab Backup ---
+        backup_widget = QWidget()
+        backup_layout = QVBoxLayout(backup_widget)
+        backup_form = QFormLayout()
+
+        backup_row = QHBoxLayout()
+        self.backup_path_edit = QLineEdit(opts.get("backup_folder", ""))
+        self.backup_path_edit.setPlaceholderText("Cartella backup (vuoto = default CFG/backups)")
+        browse_backup = QPushButton("Sfoglia…")
+        browse_backup.clicked.connect(self._browse_backup)
+        backup_row.addWidget(self.backup_path_edit)
+        backup_row.addWidget(browse_backup)
+        backup_form.addRow("Cartella backup:", backup_row)
+
+        self.backup_interval_spin = QSpinBox()
+        self.backup_interval_spin.setRange(1, 1440)
+        self.backup_interval_spin.setValue(opts.get("backup_interval_minutes", 360))
+        self.backup_interval_spin.setSuffix(" min")
+        backup_form.addRow("Intervallo automatico:", self.backup_interval_spin)
+
+        self.backup_keep_spin = QSpinBox()
+        self.backup_keep_spin.setRange(1, 999)
+        self.backup_keep_spin.setValue(opts.get("backup_keep_files", 30))
+        backup_form.addRow("Backup da mantenere:", self.backup_keep_spin)
+
+        _mode_options = [
+            ("Automatico + alla chiusura", "auto+close"),
+            ("Solo automatico (timer)", "auto"),
+            ("Solo alla chiusura", "close"),
+        ]
+        self.backup_mode_combo = QComboBox()
+        current_mode = opts.get("backup_mode", "auto+close")
+        for label, value in _mode_options:
+            self.backup_mode_combo.addItem(label, value)
+        for i, (_, value) in enumerate(_mode_options):
+            if value == current_mode:
+                self.backup_mode_combo.setCurrentIndex(i)
+                break
+        backup_form.addRow("Metodo backup:", self.backup_mode_combo)
+
+        backup_layout.addLayout(backup_form)
+        backup_layout.addStretch()
+        if show_backup_tab:
+            tabs.addTab(backup_widget, "Backup")
+
+        layout.addWidget(tabs)
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
@@ -474,10 +775,19 @@ class OpzioniDialog(QDialog):
         if folder:
             self.cfg_path_edit.setText(folder)
 
+    def _browse_backup(self) -> None:
+        folder = QFileDialog.getExistingDirectory(self, "Scegli cartella Backup", self.backup_path_edit.text())
+        if folder:
+            self.backup_path_edit.setText(folder)
+
     def _save_and_accept(self) -> None:
         opts = {
             "db_folder": self.db_path_edit.text().strip(),
             "cfg_folder": self.cfg_path_edit.text().strip(),
+            "backup_folder": self.backup_path_edit.text().strip(),
+            "backup_interval_minutes": self.backup_interval_spin.value(),
+            "backup_keep_files": self.backup_keep_spin.value(),
+            "backup_mode": self.backup_mode_combo.currentData(),
         }
         try:
             self.OPTIONS_FILE.write_text(json.dumps(opts, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -1105,9 +1415,11 @@ class PDFReportDialog(QDialog):
             QMessageBox.critical(self, "Errore", f"Errore durante la generazione del report:\n{exc}")
 
 class TimesheetWindow(QMainWindow):
-    def __init__(self, db: Database, user: dict[str, Any]) -> None:
+    def __init__(self, db: Database, user: dict[str, Any], backup_interval_minutes: int = AUTO_BACKUP_INTERVAL_MINUTES, backup_mode: str = "auto+close") -> None:
         super().__init__()
         self.db = db
+        self._backup_interval_minutes = backup_interval_minutes
+        self._backup_mode = backup_mode
         self.current_user = user
         self.selected_date = date.today()
         self.is_dark_mode = True
@@ -1263,12 +1575,15 @@ class TimesheetWindow(QMainWindow):
             return None
 
     def _backup_now_and_schedule(self) -> None:
-        try:
-            self.db.create_backup()
-        except Exception as exc:
-            print(f"[backup] Errore creazione backup: {exc}")
-        interval_ms = AUTO_BACKUP_INTERVAL_MINUTES * 60 * 1000
-        self.backup_timer.start(interval_ms)
+        if not self.is_admin:
+            return
+        if self._backup_mode in ("auto", "auto+close"):
+            try:
+                self.db.create_backup()
+            except Exception as exc:
+                print(f"[backup] Errore creazione backup: {exc}")
+            interval_ms = self._backup_interval_minutes * 60 * 1000
+            self.backup_timer.start(interval_ms)
 
     def _run_periodic_backup(self) -> None:
         try:
@@ -1356,7 +1671,7 @@ class TimesheetWindow(QMainWindow):
         dlg.exec()
 
     def _open_options(self) -> None:
-        dlg = OpzioniDialog(self)
+        dlg = OpzioniDialog(self, show_backup_tab=self.is_admin)
         dlg.exec()
 
     def _show_info(self) -> None:
@@ -1367,15 +1682,7 @@ class TimesheetWindow(QMainWindow):
         )
 
     def _show_manual(self) -> None:
-        manual_path = BASE_DIR / "manuale.pdf"
-        if manual_path.exists():
-            if sys.platform == "win32":
-                os.startfile(manual_path)
-            else:
-                import subprocess
-                subprocess.Popen(["xdg-open", str(manual_path)])
-        else:
-            QMessageBox.information(self, "Manuale", "Manuale non disponibile.")
+        ManualeDialog(APP_VERSION, self).exec()
 
     def format_date_ui(self, value: str) -> str:
         if not value:
@@ -3740,6 +4047,11 @@ class TimesheetWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:  # type: ignore[override]
         self.backup_timer.stop()
+        if self.is_admin and self._backup_mode in ("close", "auto+close"):
+            try:
+                self.db.create_backup()
+            except Exception as exc:
+                print(f"[backup] Errore backup in chiusura: {exc}")
         super().closeEvent(event)
 
 
@@ -3810,12 +4122,31 @@ def main() -> int:
 
     _check_config_folder()
 
-    db = Database()
+    # Usa db_folder da options.json se impostato
+    opts: dict = {}
+    _options_file = CFG_DIR / "options.json"
+    if _options_file.exists():
+        try:
+            opts = json.loads(_options_file.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    db_folder = opts.get("db_folder", "").strip()
+    db_path = (Path(db_folder) / "timesheet.db") if db_folder else None
+
+    db = Database(db_path) if db_path else Database()
+
+    backup_folder = opts.get("backup_folder", "").strip()
+    if backup_folder:
+        db.backup_dir = Path(backup_folder)
+    db.backup_keep = opts.get("backup_keep_files", AUTO_BACKUP_KEEP_FILES)
+
     try:
         login = LoginDialog(db)
         if login.exec() != QDialog.DialogCode.Accepted or login.user is None:
             return 0
-        window = TimesheetWindow(db=db, user=login.user)
+        backup_interval = opts.get("backup_interval_minutes", AUTO_BACKUP_INTERVAL_MINUTES)
+        backup_mode = opts.get("backup_mode", "auto+close")
+        window = TimesheetWindow(db=db, user=login.user, backup_interval_minutes=backup_interval, backup_mode=backup_mode)
         window.show()
         return qt_app.exec()
     finally:
