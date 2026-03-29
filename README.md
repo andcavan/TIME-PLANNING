@@ -1,4 +1,4 @@
-# APP Timesheet - v3.7.8
+# APP Timesheet - v3.8.3
 
 Applicazione desktop Python con UI `PyQt6` per:
 
@@ -7,6 +7,33 @@ Applicazione desktop Python con UI `PyQt6` per:
 - gestione programmazione ore su commessa/attivita
 - strumenti di controllo (consuntivo, pianificato, costi, scostamenti)
 - piattaforma multiutente con ruoli `admin` e `user`
+
+## Novita v3.8.3 — 2026-03-29
+
+- gestione utenti: aggiunta checkbox "Diario" nei permessi tab utente.
+- il tab Diario è ora condizionato al permesso `tab_diary` (default attivo per tutti gli utenti esistenti).
+- db: aggiunta colonna `tab_diary` con migrazione automatica.
+
+## Novita v3.8.2 — 2026-03-29
+
+- accesso basato su assegnazioni: gli utenti normali vedono solo clienti, commesse e attività a loro assegnati in tutti i tab (Calendario, Gestione Commesse, Piano, Diario, Report PDF).
+- `list_clients()` e `list_activities()` ora supportano filtro `user_id`.
+- aggiunta property `_filter_uid` in `TimesheetWindow` per centralizzare la logica di filtro.
+
+## Novita v3.8.1 — 2026-03-29
+
+- fix critico: rimozione utente da attività eliminava tutti gli utenti assegnati invece del solo selezionato (`remove_user_project_assignment` ignorava `user_id`).
+- fix: `user_can_access_activity()` ora verifica correttamente sia assegnazioni a livello commessa che a livello attività specifica.
+- pulizia: rimosso metodo `update_user_project_assignment()` inutilizzato (dead code).
+
+## Novita v3.8.0 — 2026-03-29
+
+- sicurezza: hashing password aggiornato da SHA-256 a PBKDF2-HMAC-SHA256 con salt (260.000 iterazioni).
+- sicurezza: migrazione automatica degli hash legacy al primo login.
+- sicurezza: avviso visibile al login se si usano le credenziali predefinite admin/admin.
+- pulizia: rimosso campo `tab_plan` inutilizzato da gestione utenti e DB.
+- backup: aggiunta selezione metodo (automatico, alla chiusura, entrambi) nelle Opzioni.
+- backup: backup eseguito solo dall'admin; utenti normali non creano backup.
 
 ## Novita v3.7.8
 

@@ -469,7 +469,8 @@ Software per la gestione delle ore lavorative, commesse, attività e risorse.</p
 <tr><td>Username</td><td><code>admin</code></td></tr>
 <tr><td>Password</td><td><code>admin</code></td></tr>
 </table>
-<div class="note">Cambiare la password admin al primo accesso tramite <b>Preferenze → Gestione Utenti</b>.</div>
+<div class="note">Cambiare la password admin al primo accesso tramite <b>Preferenze → Gestione Utenti → Reset password</b>. L'applicazione mostra un avviso automatico finché vengono usate le credenziali predefinite.</div>
+<p>Le password sono protette con <b>PBKDF2-HMAC-SHA256</b> con salt casuale. Gli hash precedenti (SHA-256 semplice) vengono aggiornati automaticamente al primo login.</p>
 
 <!-- ═══════════════════════════════════════════════ MENU BAR -->
 <h2>3. Barra dei menu</h2>
@@ -856,6 +857,15 @@ class LoginDialog(QDialog):
         except Exception:
             pass
 
+        if username == "admin" and password == "admin":
+            QMessageBox.warning(
+                self,
+                "Sicurezza",
+                "Stai usando le credenziali predefinite (admin/admin).\n\n"
+                "Cambia la password al più presto tramite\n"
+                "Preferenze → Gestione Utenti → Reset password.",
+            )
+
         self.user = user
         self.accept()
 
@@ -1176,7 +1186,7 @@ class DiaryEditorDialog(QDialog):
         self.project_combo.currentTextChanged.connect(self._on_project_change)
 
     def _load_data(self) -> None:
-        clients = self.app.db.list_clients()
+        clients = self.app.db.list_clients(user_id=self.app._filter_uid)
         client_opts = ["-- Nessuno --"] + [f"{c['id']} - {c['name']}" for c in clients]
         self.client_combo.addItems(client_opts)
         self.project_combo.addItem("-- Nessuna --")
@@ -1223,7 +1233,7 @@ class DiaryEditorDialog(QDialog):
         self.project_combo.blockSignals(True)
         self.project_combo.clear()
         if client_id:
-            projects = self.app.db.list_projects(client_id=client_id)
+            projects = self.app.db.list_projects(client_id=client_id, user_id=self.app._filter_uid)
             self.project_combo.addItems(["-- Nessuna --"] + [f"{p['id']} - {p['name']}" for p in projects])
         else:
             self.project_combo.addItem("-- Nessuna --")
@@ -1235,7 +1245,7 @@ class DiaryEditorDialog(QDialog):
         project_id = self.app._id_from_option(self.project_combo.currentText())
         self.activity_combo.clear()
         if project_id:
-            activities = self.app.db.list_activities(project_id=project_id)
+            activities = self.app.db.list_activities(project_id=project_id, user_id=self.app._filter_uid)
             self.activity_combo.addItems(["-- Nessuna --"] + [f"{a['id']} - {a['name']}" for a in activities])
         else:
             self.activity_combo.addItem("-- Nessuna --")
@@ -1327,9 +1337,10 @@ class PDFReportDialog(QDialog):
         self.project_combo.currentTextChanged.connect(self._on_project_change)
 
     def _load_options(self) -> None:
-        self.all_clients = self.app.db.list_clients()
-        self.all_projects = self.app.db.list_projects()
-        self.all_activities = self.app.db.list_activities()
+        uid = self.app._filter_uid
+        self.all_clients = self.app.db.list_clients(user_id=uid)
+        self.all_projects = self.app.db.list_projects(user_id=uid)
+        self.all_activities = self.app.db.list_activities(user_id=uid)
         self.all_users = self.app.db.list_users(include_inactive=False)
 
         self.client_combo.addItems(["Tutti i clienti"] + [f"{c['id']} - {c['name']}" for c in self.all_clients])
@@ -1342,7 +1353,7 @@ class PDFReportDialog(QDialog):
     def _on_client_change(self) -> None:
         cid = self.app._id_from_option(self.client_combo.currentText())
         if cid:
-            projects = self.app.db.list_projects(client_id=cid)
+            projects = self.app.db.list_projects(client_id=cid, user_id=self.app._filter_uid)
             options = ["Tutte le commesse"] + [f"{p['id']} - {p['client_name']} / {p['name']}" for p in projects]
         else:
             options = ["Tutte le commesse"] + [f"{p['id']} - {p['client_name']} / {p['name']}" for p in self.all_projects]
@@ -1445,6 +1456,11 @@ class TimesheetWindow(QMainWindow):
     def is_admin(self) -> bool:
         return bool(self.current_user and self.current_user.get("role") == "admin")
 
+    @property
+    def _filter_uid(self) -> int | None:
+        """Restituisce None per admin (vede tutto), user_id per utenti normali (filtro assegnazioni)."""
+        return None if self.is_admin else int(self.current_user["id"])
+
     def _apply_theme(self) -> None:
         app = QApplication.instance()
         if app is None:
@@ -1495,9 +1511,10 @@ class TimesheetWindow(QMainWindow):
             self.tabview.addTab(self.tab_control, "Controllo")
             self.build_control_tab()
 
-        self.tab_diary = QWidget()
-        self._diary_tab_index = self.tabview.addTab(self.tab_diary, "Diario")
-        self.build_diary_tab()
+        if self._tab_enabled("tab_diary"):
+            self.tab_diary = QWidget()
+            self._diary_tab_index = self.tabview.addTab(self.tab_diary, "Diario")
+            self.build_diary_tab()
 
         self.refresh_master_data()
         self.refresh_day_entries()
@@ -2006,6 +2023,7 @@ class TimesheetWindow(QMainWindow):
                 project_id=project_id,
                 only_with_open_schedules=True,
                 available_from_date=today,
+                user_id=self._filter_uid,
             )
             self._set_combo_values(self.ts_activity_combo, [""] + [self._activity_option(a) for a in activities])
             self.ts_activity_combo.setCurrentIndex(0)
@@ -2337,7 +2355,7 @@ class TimesheetWindow(QMainWindow):
             self.filter_projects_tree()
             return
 
-        projects = self.db.list_projects(client_id=client_id)
+        projects = self.db.list_projects(client_id=client_id, user_id=self._filter_uid)
         schedules = self.db.list_schedules()
         show_closed = self.show_closed_projects.isChecked()
 
@@ -3274,7 +3292,7 @@ class TimesheetWindow(QMainWindow):
     def refresh_programming_options(self) -> None:
         if not hasattr(self, "plan_project_combo"):
             return
-        projects = self.db.list_projects()
+        projects = self.db.list_projects(user_id=self._filter_uid)
         self._set_combo_values(self.plan_project_combo, [self._project_option(p) for p in projects])
         self.on_plan_project_change(self.plan_project_combo.currentText())
 
@@ -3282,7 +3300,7 @@ class TimesheetWindow(QMainWindow):
         if not hasattr(self, "plan_activity_combo"):
             return
         project_id = self._id_from_option(self.plan_project_combo.currentText())
-        activities = self.db.list_activities(project_id)
+        activities = self.db.list_activities(project_id, user_id=self._filter_uid)
         options = ["(Tutta la commessa)"] + [self._activity_option(a) for a in activities]
         self._set_combo_values(self.plan_activity_combo, options)
         self.plan_activity_combo.setCurrentText("(Tutta la commessa)")
@@ -3336,7 +3354,7 @@ class TimesheetWindow(QMainWindow):
         self.on_plan_project_change(project_option)
 
         if schedule["activity_id"] is not None:
-            activities = self.db.list_activities(schedule["project_id"])
+            activities = self.db.list_activities(schedule["project_id"], user_id=self._filter_uid)
             for activity in activities:
                 if activity["id"] == schedule["activity_id"]:
                     option = self._activity_option(activity)
@@ -3649,7 +3667,7 @@ class TimesheetWindow(QMainWindow):
         self._diary_populate_combos()
 
     def _diary_populate_combos(self) -> None:
-        clients = self.db.list_clients()
+        clients = self.db.list_clients(user_id=self._filter_uid)
         self.diary_client_combo.blockSignals(True)
         self.diary_client_combo.clear()
         self.diary_client_combo.addItems(["Tutti"] + [f"{c['id']} - {c['name']}" for c in clients])
@@ -3666,7 +3684,7 @@ class TimesheetWindow(QMainWindow):
         self.diary_project_combo.blockSignals(True)
         self.diary_project_combo.clear()
         if client_id:
-            projects = self.db.list_projects(client_id)
+            projects = self.db.list_projects(client_id, user_id=self._filter_uid)
             self.diary_project_combo.addItems(["Tutte"] + [f"{p['id']} - {p['name']}" for p in projects])
         else:
             self.diary_project_combo.addItem("Tutte")
@@ -3678,7 +3696,7 @@ class TimesheetWindow(QMainWindow):
         project_id = self._id_from_option(self.diary_project_combo.currentText())
         self.diary_activity_combo.clear()
         if project_id:
-            activities = self.db.list_activities(project_id)
+            activities = self.db.list_activities(project_id, user_id=self._filter_uid)
             self.diary_activity_combo.addItems(["Tutte"] + [f"{a['id']} - {a['name']}" for a in activities])
         else:
             self.diary_activity_combo.addItem("Tutte")
@@ -3836,6 +3854,9 @@ class TimesheetWindow(QMainWindow):
         self.tab_control_check = QCheckBox("Controllo")
         self.tab_control_check.setChecked(True)
         tabs_row.addWidget(self.tab_control_check)
+        self.tab_diary_check = QCheckBox("Diario")
+        self.tab_diary_check.setChecked(True)
+        tabs_row.addWidget(self.tab_diary_check)
         btn_tabs = QPushButton("Salva permessi")
         btn_tabs.clicked.connect(self.save_user_tabs)
         tabs_row.addWidget(btn_tabs)
@@ -3888,6 +3909,7 @@ class TimesheetWindow(QMainWindow):
         self.tab_calendar_check.setChecked(bool(selected.get("tab_calendar", 1)))
         self.tab_master_check.setChecked(bool(selected.get("tab_master", 1)))
         self.tab_control_check.setChecked(bool(selected.get("tab_control", 1)))
+        self.tab_diary_check.setChecked(bool(selected.get("tab_diary", 1)))
 
     def save_user_tabs(self) -> None:
         user_id = self._selected_table_id(self.users_table)
@@ -3899,8 +3921,8 @@ class TimesheetWindow(QMainWindow):
                 user_id,
                 self.tab_calendar_check.isChecked(),
                 self.tab_master_check.isChecked(),
-                True,
                 self.tab_control_check.isChecked(),
+                self.tab_diary_check.isChecked(),
             )
             self.refresh_users_data()
             QMessageBox.information(self, "Utenti", "Permessi aggiornati. L'utente deve rifare il login per applicare le modifiche.")
@@ -3937,13 +3959,13 @@ class TimesheetWindow(QMainWindow):
                 if role == "admin":
                     self.db.create_user(username, full_name, role, password, True, True, True, True)
                 else:
-                    self.db.create_user(username, full_name, role, password, self.tab_calendar_check.isChecked(), self.tab_master_check.isChecked(), True, self.tab_control_check.isChecked())
+                    self.db.create_user(username, full_name, role, password, self.tab_calendar_check.isChecked(), self.tab_master_check.isChecked(), self.tab_control_check.isChecked(), self.tab_diary_check.isChecked())
                 QMessageBox.information(self, "Utenti", "Utente creato con successo.")
             else:
                 if role == "admin":
                     self.db.update_user(self.editing_user_id, username, full_name, role, True, True, True, True)
                 else:
-                    self.db.update_user(self.editing_user_id, username, full_name, role, self.tab_calendar_check.isChecked(), self.tab_master_check.isChecked(), True, self.tab_control_check.isChecked())
+                    self.db.update_user(self.editing_user_id, username, full_name, role, self.tab_calendar_check.isChecked(), self.tab_master_check.isChecked(), self.tab_control_check.isChecked(), self.tab_diary_check.isChecked())
                 QMessageBox.information(self, "Utenti", "Utente modificato con successo.")
         except (ValueError, sqlite3.IntegrityError) as exc:
             QMessageBox.critical(self, "Utenti", str(exc))
@@ -3972,6 +3994,7 @@ class TimesheetWindow(QMainWindow):
         self.tab_calendar_check.setChecked(bool(selected.get("tab_calendar", 1)))
         self.tab_master_check.setChecked(bool(selected.get("tab_master", 1)))
         self.tab_control_check.setChecked(bool(selected.get("tab_control", 1)))
+        self.tab_diary_check.setChecked(bool(selected.get("tab_diary", 1)))
         self.save_user_button.setText("Salva modifiche")
         self.apply_edit_button_style(self.save_user_button)
 
@@ -3984,6 +4007,7 @@ class TimesheetWindow(QMainWindow):
         self.tab_calendar_check.setChecked(True)
         self.tab_master_check.setChecked(True)
         self.tab_control_check.setChecked(True)
+        self.tab_diary_check.setChecked(True)
         self.save_user_button.setText("Crea utente")
         self._set_button_role(self.save_user_button, "btn_primary")
 
@@ -4018,7 +4042,7 @@ class TimesheetWindow(QMainWindow):
 
     # Utility comuni
     def refresh_master_data(self) -> None:
-        clients = self.db.list_clients()
+        clients = self.db.list_clients(user_id=self._filter_uid)
         client_values = [self._entity_option(c["id"], c["name"]) for c in clients]
 
         if hasattr(self, "ts_client_combo"):

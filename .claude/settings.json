@@ -4,7 +4,17 @@
       "Read(//c/Users/prog3/Desktop/**)",
       "Bash(grep -E \"\\\\.py$|\\\\.json$|\\\\.txt$\")",
       "Bash(rm APP-Timesheet-v3.4.6.spec APP-Timesheet-v3.5.0.spec APP-Timesheet-v3.6.9.spec APP-Timesheet-v3.6.10.spec APP-Timesheet-v3.6.11.spec _main_base_eca9f0a.py _main_base_eca9f0a_utf8.py debug.log build.ps1)",
-      "Bash(rm -rf __pycache__)"
+      "Bash(rm -rf __pycache__)",
+      "Bash(\"c:/Users/prog3/Desktop/APP MECCANICA/TIME-PLANNING/VERSION\")",
+      "Bash(cp APP-Timesheet-v3.8.0.spec APP-Timesheet-v3.8.1.spec)",
+      "Bash(sed -i 's/3\\\\.8\\\\.0/3.8.1/g' APP-Timesheet-v3.8.1.spec)",
+      "Bash(rm APP-Timesheet-v3.8.0.spec)",
+      "Bash(cp APP-Timesheet-v3.8.1.spec APP-Timesheet-v3.8.2.spec)",
+      "Bash(sed -i 's/3\\\\.8\\\\.1/3.8.2/g' APP-Timesheet-v3.8.2.spec)",
+      "Bash(rm APP-Timesheet-v3.8.1.spec)",
+      "Bash(cp APP-Timesheet-v3.8.2.spec APP-Timesheet-v3.8.3.spec)",
+      "Bash(sed -i 's/3\\\\.8\\\\.2/3.8.3/g' APP-Timesheet-v3.8.3.spec)",
+      "Bash(rm APP-Timesheet-v3.8.2.spec)"
     ]
   }
 }

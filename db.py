@@ -130,7 +130,24 @@ class Database:
 
     @staticmethod
     def hash_password(password: str) -> str:
-        return hashlib.sha256(password.encode("utf-8")).hexdigest()
+        """Crea hash PBKDF2-HMAC-SHA256 con salt casuale."""
+        salt = os.urandom(16)
+        dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, 260_000)
+        return f"pbkdf2:260000:{salt.hex()}:{dk.hex()}"
+
+    @staticmethod
+    def verify_password(password: str, stored_hash: str) -> bool:
+        """Verifica password supportando sia PBKDF2 (nuovo) che SHA-256 semplice (legacy)."""
+        if ":" in stored_hash:
+            try:
+                _, iterations, salt_hex, dk_hex = stored_hash.split(":")
+                salt = bytes.fromhex(salt_hex)
+                dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, int(iterations))
+                return dk.hex() == dk_hex
+            except Exception:
+                return False
+        # Legacy: SHA-256 senza salt
+        return hashlib.sha256(password.encode("utf-8")).hexdigest() == stored_hash
 
     @staticmethod
     def calculate_working_days(start_date_str: str, end_date_str: str) -> int:
@@ -343,7 +360,10 @@ class Database:
         if "tab_control" not in columns:
             self.conn.execute("ALTER TABLE users ADD COLUMN tab_control INTEGER NOT NULL DEFAULT 1 CHECK(tab_control IN (0, 1))")
             self.conn.commit()
-        
+        if "tab_diary" not in columns:
+            self.conn.execute("ALTER TABLE users ADD COLUMN tab_diary INTEGER NOT NULL DEFAULT 1 CHECK(tab_diary IN (0, 1))")
+            self.conn.commit()
+
         # Aggiungi activity_id a user_project_assignments per assegnazioni specifiche alle attività
         cursor = self.conn.execute("PRAGMA table_info(user_project_assignments)")
         columns = [row[1] for row in cursor.fetchall()]
@@ -415,78 +435,92 @@ class Database:
         return dict(row) if row else None
 
     def authenticate(self, username: str, password: str) -> dict[str, Any] | None:
-        return self._fetchone(
+        row = self._fetchone(
             """
-            SELECT id, username, full_name, role, active, tab_calendar, tab_master, tab_plan, tab_control
+            SELECT id, username, full_name, role, active, password_hash,
+                   tab_calendar, tab_master, tab_control, tab_diary
             FROM users
-            WHERE username = ? AND password_hash = ? AND active = 1
+            WHERE username = ? AND active = 1
             """,
-            (username.strip(), self.hash_password(password)),
+            (username.strip(),),
         )
+        if not row:
+            return None
+        if not self.verify_password(password, row["password_hash"]):
+            return None
+        # Upgrade automatico da SHA-256 legacy a PBKDF2
+        if ":" not in row["password_hash"]:
+            self.conn.execute(
+                "UPDATE users SET password_hash = ? WHERE id = ?",
+                (self.hash_password(password), row["id"]),
+            )
+            self.conn.commit()
+        row.pop("password_hash", None)
+        return row
 
     def list_users(self, include_inactive: bool = True) -> list[dict[str, Any]]:
-        query = "SELECT id, username, full_name, role, active, tab_calendar, tab_master, tab_plan, tab_control FROM users"
+        query = "SELECT id, username, full_name, role, active, tab_calendar, tab_master, tab_control, tab_diary FROM users"
         if not include_inactive:
             query += " WHERE active = 1"
         query += " ORDER BY username"
         return self._fetchall(query)
 
     def create_user(
-        self, 
-        username: str, 
-        full_name: str, 
-        role: str, 
+        self,
+        username: str,
+        full_name: str,
+        role: str,
         password: str,
         tab_calendar: bool = True,
         tab_master: bool = True,
-        tab_plan: bool = True,
-        tab_control: bool = True
+        tab_control: bool = True,
+        tab_diary: bool = True,
     ) -> None:
         self.conn.execute(
             """
-            INSERT INTO users (username, full_name, role, password_hash, active, tab_calendar, tab_master, tab_plan, tab_control)
-            VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?)
+            INSERT INTO users (username, full_name, role, password_hash, active, tab_calendar, tab_master, tab_plan, tab_control, tab_diary)
+            VALUES (?, ?, ?, ?, 1, ?, ?, 1, ?, ?)
             """,
             (
-                username.strip(), 
-                full_name.strip(), 
-                role, 
+                username.strip(),
+                full_name.strip(),
+                role,
                 self.hash_password(password),
                 1 if tab_calendar else 0,
                 1 if tab_master else 0,
-                1 if tab_plan else 0,
-                1 if tab_control else 0
+                1 if tab_control else 0,
+                1 if tab_diary else 0,
             ),
         )
         self.conn.commit()
 
     def update_user(
-        self, 
+        self,
         user_id: int,
-        username: str, 
-        full_name: str, 
+        username: str,
+        full_name: str,
         role: str,
         tab_calendar: bool = True,
         tab_master: bool = True,
-        tab_plan: bool = True,
-        tab_control: bool = True
+        tab_control: bool = True,
+        tab_diary: bool = True,
     ) -> None:
         """Aggiorna i dati di un utente (senza password)."""
         self.conn.execute(
             """
-            UPDATE users 
-            SET username = ?, full_name = ?, role = ?, tab_calendar = ?, tab_master = ?, tab_plan = ?, tab_control = ?
+            UPDATE users
+            SET username = ?, full_name = ?, role = ?, tab_calendar = ?, tab_master = ?, tab_control = ?, tab_diary = ?
             WHERE id = ?
             """,
             (
-                username.strip(), 
-                full_name.strip(), 
+                username.strip(),
+                full_name.strip(),
                 role,
                 1 if tab_calendar else 0,
                 1 if tab_master else 0,
-                1 if tab_plan else 0,
                 1 if tab_control else 0,
-                user_id
+                1 if tab_diary else 0,
+                user_id,
             ),
         )
         self.conn.commit()
@@ -506,17 +540,17 @@ class Database:
         self.conn.commit()
 
     def update_user_tabs(
-        self, 
-        user_id: int, 
-        tab_calendar: bool, 
-        tab_master: bool, 
-        tab_plan: bool, 
-        tab_control: bool
+        self,
+        user_id: int,
+        tab_calendar: bool,
+        tab_master: bool,
+        tab_control: bool,
+        tab_diary: bool,
     ) -> None:
         """Aggiorna i permessi tab per un utente."""
         self.conn.execute(
-            "UPDATE users SET tab_calendar = ?, tab_master = ?, tab_plan = ?, tab_control = ? WHERE id = ?",
-            (1 if tab_calendar else 0, 1 if tab_master else 0, 1 if tab_plan else 0, 1 if tab_control else 0, user_id),
+            "UPDATE users SET tab_calendar = ?, tab_master = ?, tab_control = ?, tab_diary = ? WHERE id = ?",
+            (1 if tab_calendar else 0, 1 if tab_master else 0, 1 if tab_control else 0, 1 if tab_diary else 0, user_id),
         )
         self.conn.commit()
 
@@ -586,21 +620,17 @@ class Database:
         except Exception:
             self.conn.rollback()
     
-    def update_user_project_assignment(self, assignment_id: int, user_id: int, project_id: int, activity_id: int | None = None) -> None:
-        """Aggiorna un'assegnazione esistente. Non utilizzata con la struttura attuale che usa PRIMARY KEY composita."""
-        pass
-    
-    def remove_user_project_assignment(self, user_id: int | None, project_id: int, activity_id: int | None = None) -> None:
+    def remove_user_project_assignment(self, user_id: int, project_id: int, activity_id: int | None = None) -> None:
         """Rimuove un'assegnazione utente-progetto-attività."""
         if activity_id:
             self.conn.execute(
-                "DELETE FROM user_project_assignments WHERE project_id = ? AND activity_id = ?",
-                (project_id, activity_id),
+                "DELETE FROM user_project_assignments WHERE user_id = ? AND project_id = ? AND activity_id = ?",
+                (user_id, project_id, activity_id),
             )
         else:
             self.conn.execute(
-                "DELETE FROM user_project_assignments WHERE project_id = ? AND activity_id IS NULL",
-                (project_id,),
+                "DELETE FROM user_project_assignments WHERE user_id = ? AND project_id = ? AND activity_id IS NULL",
+                (user_id, project_id),
             )
         self.conn.commit()
     
@@ -618,7 +648,11 @@ class Database:
         )
     
     def user_can_access_activity(self, user_id: int, project_id: int, activity_id: int) -> bool:
-        """Verifica se un utente può accedere a un'attività (tramite assegnazione alla commessa)."""
+        """Verifica se un utente può accedere a un'attività.
+
+        L'accesso è concesso se l'utente è assegnato alla commessa a livello generale
+        (activity_id IS NULL) oppure specificatamente all'attività richiesta.
+        """
         # Verifica che l'attività appartenga alla commessa
         activity = self._fetchone(
             "SELECT id FROM activities WHERE id = ? AND project_id = ?",
@@ -626,9 +660,16 @@ class Database:
         )
         if not activity:
             return False
-        
-        # Verifica assegnazione utente alla commessa
-        return self.is_user_assigned_to_project(user_id, project_id)
+
+        row = self._fetchone(
+            """
+            SELECT 1 FROM user_project_assignments
+            WHERE user_id = ? AND project_id = ?
+              AND (activity_id IS NULL OR activity_id = ?)
+            """,
+            (user_id, project_id, activity_id),
+        )
+        return row is not None
 
     # === CLIENTS ===
 
@@ -749,7 +790,19 @@ class Database:
         self.conn.commit()
         return cursor.lastrowid
 
-    def list_clients(self) -> list[dict[str, Any]]:
+    def list_clients(self, user_id: int | None = None) -> list[dict[str, Any]]:
+        if user_id is not None:
+            return self._fetchall(
+                """
+                SELECT DISTINCT c.id, c.name, c.hourly_rate, c.notes, c.referente, c.telefono, c.email
+                FROM clients c
+                JOIN projects p ON p.client_id = c.id
+                JOIN user_project_assignments upa ON upa.project_id = p.id
+                WHERE upa.user_id = ?
+                ORDER BY c.name
+                """,
+                (user_id,),
+            )
         return self._fetchall(
             """
             SELECT id, name, hourly_rate, notes, referente, telefono, email
@@ -801,7 +854,7 @@ class Database:
             tuple(params),
         )
 
-    def list_activities(self, project_id: int | None = None, only_with_open_schedules: bool = False, available_from_date: str | None = None) -> list[dict[str, Any]]:
+    def list_activities(self, project_id: int | None = None, only_with_open_schedules: bool = False, available_from_date: str | None = None, user_id: int | None = None) -> list[dict[str, Any]]:
         params: list[Any] = []
         where_clauses = []
         
@@ -819,7 +872,20 @@ class Database:
             # Mostra solo attività la cui pianificazione è già iniziata
             where_clauses.append("a.id IN (SELECT DISTINCT activity_id FROM schedules WHERE activity_id IS NOT NULL AND start_date <= ?)")
             params.append(available_from_date)
-        
+
+        if user_id is not None:
+            # Mostra solo attività assegnate all'utente:
+            # - assegnazione a livello commessa (activity_id IS NULL) → accesso a tutte le attività della commessa
+            # - assegnazione a livello attività specifica → solo quella attività
+            where_clauses.append(
+                "a.id IN ("
+                "  SELECT a2.id FROM activities a2"
+                "  JOIN user_project_assignments upa ON upa.project_id = a2.project_id"
+                "  WHERE upa.user_id = ? AND (upa.activity_id IS NULL OR upa.activity_id = a2.id)"
+                ")"
+            )
+            params.append(user_id)
+
         where = ""
         if where_clauses:
             where = "WHERE " + " AND ".join(where_clauses)
