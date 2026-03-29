@@ -7,8 +7,11 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
+import json
+import os
+
 from PyQt6.QtCore import QDate, QTimer, Qt
-from PyQt6.QtGui import QColor
+from PyQt6.QtGui import QAction, QColor
 from PyQt6.QtWidgets import (
     QApplication,
     QCalendarWidget,
@@ -17,6 +20,7 @@ from PyQt6.QtWidgets import (
     QDateEdit,
     QDialog,
     QDialogButtonBox,
+    QFileDialog,
     QFormLayout,
     QGridLayout,
     QGroupBox,
@@ -406,6 +410,86 @@ QCalendarWidget QTableView QHeaderView::section:vertical {{
                 )
 
         painter.restore()
+
+
+class OpzioniDialog(QDialog):
+    """Dialog per configurare percorsi DB e cartella configurazione."""
+
+    OPTIONS_FILE = CFG_DIR / "options.json"
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Opzioni")
+        self.setMinimumWidth(500)
+
+        opts = self._load_options()
+
+        layout = QVBoxLayout(self)
+        form = QFormLayout()
+
+        # Percorso cartella DB
+        db_row = QHBoxLayout()
+        self.db_path_edit = QLineEdit(opts.get("db_folder", ""))
+        self.db_path_edit.setPlaceholderText("Cartella del database (vuoto = default)")
+        browse_db = QPushButton("Sfoglia…")
+        browse_db.clicked.connect(self._browse_db)
+        db_row.addWidget(self.db_path_edit)
+        db_row.addWidget(browse_db)
+        form.addRow("Cartella DB:", db_row)
+
+        # Percorso cartella config
+        cfg_row = QHBoxLayout()
+        self.cfg_path_edit = QLineEdit(opts.get("cfg_folder", ""))
+        self.cfg_path_edit.setPlaceholderText("Cartella configurazione (vuoto = default)")
+        browse_cfg = QPushButton("Sfoglia…")
+        browse_cfg.clicked.connect(self._browse_cfg)
+        cfg_row.addWidget(self.cfg_path_edit)
+        cfg_row.addWidget(browse_cfg)
+        form.addRow("Cartella Config:", cfg_row)
+
+        layout.addLayout(form)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self._save_and_accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def _load_options(self) -> dict:
+        if self.OPTIONS_FILE.exists():
+            try:
+                return json.loads(self.OPTIONS_FILE.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+        return {}
+
+    def _browse_db(self) -> None:
+        folder = QFileDialog.getExistingDirectory(self, "Scegli cartella DB", self.db_path_edit.text())
+        if folder:
+            self.db_path_edit.setText(folder)
+
+    def _browse_cfg(self) -> None:
+        folder = QFileDialog.getExistingDirectory(self, "Scegli cartella Config", self.cfg_path_edit.text())
+        if folder:
+            self.cfg_path_edit.setText(folder)
+
+    def _save_and_accept(self) -> None:
+        opts = {
+            "db_folder": self.db_path_edit.text().strip(),
+            "cfg_folder": self.cfg_path_edit.text().strip(),
+        }
+        try:
+            self.OPTIONS_FILE.write_text(json.dumps(opts, indent=2, ensure_ascii=False), encoding="utf-8")
+        except Exception as exc:
+            QMessageBox.warning(self, "Errore", f"Impossibile salvare le opzioni:\n{exc}")
+            return
+        QMessageBox.information(
+            self,
+            "Opzioni salvate",
+            "Le modifiche ai percorsi saranno applicate al prossimo avvio dell'applicazione.",
+        )
+        self.accept()
 
 
 class LoginDialog(QDialog):
@@ -1064,6 +1148,7 @@ class TimesheetWindow(QMainWindow):
 
         central = QWidget()
         self.setCentralWidget(central)
+        self._build_menubar()
         root = QVBoxLayout(central)
         root.setContentsMargins(10, 10, 10, 10)
         root.setSpacing(10)
@@ -1076,14 +1161,6 @@ class TimesheetWindow(QMainWindow):
         self.user_label = QLabel()
         topbar.addWidget(self.user_label)
         self._update_user_label()
-
-        theme_btn = QPushButton("Tema")
-        theme_btn.clicked.connect(self.toggle_theme)
-        topbar.addWidget(theme_btn)
-
-        logout_btn = QPushButton("Logout")
-        logout_btn.clicked.connect(self.logout)
-        topbar.addWidget(logout_btn)
 
         root.addLayout(topbar)
 
@@ -1110,16 +1187,11 @@ class TimesheetWindow(QMainWindow):
         self._diary_tab_index = self.tabview.addTab(self.tab_diary, "Diario")
         self.build_diary_tab()
 
-        self.tab_users = QWidget()
-        self.tabview.addTab(self.tab_users, "Utenti")
-        self.build_users_tab()
-
         self.refresh_master_data()
         self.refresh_day_entries()
         self.refresh_schedule_list()
         self.refresh_control_panel()
         self.refresh_diary_data()
-        self.refresh_users_data()
         self.update_diary_alert()
 
     def _tab_enabled(self, key: str) -> bool:
@@ -1227,6 +1299,83 @@ class TimesheetWindow(QMainWindow):
         self.current_user = dlg.user
         self.selected_date = date.today()
         self._build_ui()
+
+    # ------------------------------------------------------------------
+    # Menu bar
+    # ------------------------------------------------------------------
+
+    def _build_menubar(self) -> None:
+        mb = self.menuBar()
+        assert mb is not None
+        mb.clear()
+
+        # File
+        menu_file = mb.addMenu("File")
+        act_logout = QAction("Logout", self)
+        act_logout.triggered.connect(self.logout)
+        menu_file.addAction(act_logout)
+        menu_file.addSeparator()
+        act_exit = QAction("Esci", self)
+        act_exit.triggered.connect(self.close)
+        menu_file.addAction(act_exit)
+
+        # Preferenze
+        menu_pref = mb.addMenu("Preferenze")
+        act_users = QAction("Gestione Utenti", self)
+        act_users.triggered.connect(self._go_to_users_tab)
+        menu_pref.addAction(act_users)
+        act_options = QAction("Opzioni", self)
+        act_options.triggered.connect(self._open_options)
+        menu_pref.addAction(act_options)
+
+        # Visualizzazione
+        menu_view = mb.addMenu("Visualizzazione")
+        act_theme = QAction("Tema", self)
+        act_theme.triggered.connect(self.toggle_theme)
+        menu_view.addAction(act_theme)
+
+        # Aiuto
+        menu_help = mb.addMenu("Aiuto")
+        act_info = QAction("Informazioni", self)
+        act_info.triggered.connect(self._show_info)
+        menu_help.addAction(act_info)
+        act_manual = QAction("Manuale", self)
+        act_manual.triggered.connect(self._show_manual)
+        menu_help.addAction(act_manual)
+
+    def _go_to_users_tab(self) -> None:
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Gestione Utenti")
+        dlg.setMinimumSize(900, 600)
+        dlg_layout = QVBoxLayout(dlg)
+        dlg_layout.setContentsMargins(0, 0, 0, 0)
+        self.tab_users = QWidget()
+        dlg_layout.addWidget(self.tab_users)
+        self.build_users_tab()
+        self.refresh_users_data()
+        dlg.exec()
+
+    def _open_options(self) -> None:
+        dlg = OpzioniDialog(self)
+        dlg.exec()
+
+    def _show_info(self) -> None:
+        QMessageBox.information(
+            self,
+            "Informazioni",
+            f"APP Timesheet v{APP_VERSION}\n\nSoftware per la gestione ore e commesse.\n\n© 2024",
+        )
+
+    def _show_manual(self) -> None:
+        manual_path = BASE_DIR / "manuale.pdf"
+        if manual_path.exists():
+            if sys.platform == "win32":
+                os.startfile(manual_path)
+            else:
+                import subprocess
+                subprocess.Popen(["xdg-open", str(manual_path)])
+        else:
+            QMessageBox.information(self, "Manuale", "Manuale non disponibile.")
 
     def format_date_ui(self, value: str) -> str:
         if not value:
@@ -3594,9 +3743,72 @@ class TimesheetWindow(QMainWindow):
         super().closeEvent(event)
 
 
+def _check_config_folder() -> None:
+    """Al primo avvio, se la cartella di configurazione non è impostata, chiede all'utente di selezionarla."""
+    options_file = CFG_DIR / "options.json"
+    opts: dict = {}
+    if options_file.exists():
+        try:
+            opts = json.loads(options_file.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+
+    changed = False
+
+    if not opts.get("cfg_folder", "").strip():
+        msg = QMessageBox()
+        msg.setWindowTitle("Configurazione iniziale")
+        msg.setIcon(QMessageBox.Icon.Warning)
+        msg.setText("La cartella di configurazione non è stata impostata.")
+        msg.setInformativeText(
+            "Vuoi selezionare ora la cartella in cui salvare i file di configurazione?\n"
+            "Se annulli verrà usata la cartella predefinita."
+        )
+        msg.setStandardButtons(
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel
+        )
+        msg.setDefaultButton(QMessageBox.StandardButton.Yes)
+        if msg.exec() == QMessageBox.StandardButton.Yes:
+            folder = QFileDialog.getExistingDirectory(
+                None, "Seleziona cartella di configurazione", str(CFG_DIR)
+            )
+            if folder:
+                opts["cfg_folder"] = folder
+                changed = True
+
+    if not opts.get("db_folder", "").strip():
+        msg = QMessageBox()
+        msg.setWindowTitle("Configurazione iniziale")
+        msg.setIcon(QMessageBox.Icon.Warning)
+        msg.setText("La cartella del database non è stata impostata.")
+        msg.setInformativeText(
+            "Vuoi selezionare ora la cartella in cui si trova il database?\n"
+            "Se annulli verrà usata la cartella predefinita."
+        )
+        msg.setStandardButtons(
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel
+        )
+        msg.setDefaultButton(QMessageBox.StandardButton.Yes)
+        if msg.exec() == QMessageBox.StandardButton.Yes:
+            folder = QFileDialog.getExistingDirectory(
+                None, "Seleziona cartella database", str(CFG_DIR)
+            )
+            if folder:
+                opts["db_folder"] = folder
+                changed = True
+
+    if changed:
+        try:
+            options_file.write_text(json.dumps(opts, indent=2, ensure_ascii=False), encoding="utf-8")
+        except Exception as exc:
+            QMessageBox.warning(None, "Errore", f"Impossibile salvare la configurazione:\n{exc}")
+
+
 def main() -> int:
     qt_app = QApplication(sys.argv)
     qt_app.setApplicationName("APP Timesheet")
+
+    _check_config_folder()
 
     db = Database()
     try:
