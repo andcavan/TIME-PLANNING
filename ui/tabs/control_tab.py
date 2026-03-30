@@ -25,6 +25,34 @@ def build_control_tab(app) -> None:
     ctk.CTkButton(header, text="Aggiorna", command=app.refresh_control_panel).pack(side="left", padx=12, pady=8)
     ctk.CTkButton(header, text="📄 Genera Report PDF", command=app.show_pdf_report_dialog).pack(side="left", padx=12, pady=8)
 
+    # Separatore visivo
+    ttk.Separator(header, orient="vertical").pack(side="left", fill="y", padx=8, pady=4)
+
+    # Filtro Da
+    ctk.CTkLabel(header, text="Da:").pack(side="left", padx=(4, 2), pady=8)
+    app.ctrl_filter_date_from = ctk.CTkEntry(header, width=90, placeholder_text="GG/MM/AAAA")
+    app.ctrl_filter_date_from.pack(side="left", padx=2, pady=8)
+
+    # Filtro A
+    ctk.CTkLabel(header, text="A:").pack(side="left", padx=(8, 2), pady=8)
+    app.ctrl_filter_date_to = ctk.CTkEntry(header, width=90, placeholder_text="GG/MM/AAAA")
+    app.ctrl_filter_date_to.pack(side="left", padx=2, pady=8)
+
+    # Filtro Utente
+    ctk.CTkLabel(header, text="Utente:").pack(side="left", padx=(8, 2), pady=8)
+    users = app.db.list_users(include_inactive=False)
+    user_names = ["Tutti"] + [u["username"] for u in users]
+    app.ctrl_filter_user = ctk.CTkComboBox(header, values=user_names, width=130)
+    app.ctrl_filter_user.set("Tutti")
+    app.ctrl_filter_user.pack(side="left", padx=2, pady=8)
+
+    # Bottoni Applica / Azzera
+    ctk.CTkButton(header, text="Applica", width=70, command=app.refresh_control_panel).pack(side="left", padx=(8, 2), pady=8)
+    ctk.CTkButton(
+        header, text="Azzera", width=70, fg_color="gray",
+        command=lambda: _reset_filters(app)
+    ).pack(side="left", padx=2, pady=8)
+
     table_frame = ctk.CTkFrame(app.tab_control)
     table_frame.grid(row=1, column=0, padx=8, pady=(0, 8), sticky="nsew")
     table_frame.grid_rowconfigure(0, weight=1)
@@ -90,6 +118,26 @@ def build_control_tab(app) -> None:
     scroll_x.grid(row=1, column=0, sticky="ew")
 
 
+def _reset_filters(app) -> None:
+    """Azzera tutti i filtri e aggiorna il pannello."""
+    app.ctrl_filter_date_from.delete(0, "end")
+    app.ctrl_filter_date_to.delete(0, "end")
+    app.ctrl_filter_user.set("Tutti")
+    app.refresh_control_panel()
+
+
+def _parse_filter_date(value: str) -> str | None:
+    """Converte una data GG/MM/AAAA in YYYY-MM-DD. Restituisce None se vuota o non valida."""
+    from datetime import datetime
+    value = value.strip()
+    if not value:
+        return None
+    try:
+        return datetime.strptime(value, "%d/%m/%Y").strftime("%Y-%m-%d")
+    except ValueError:
+        return None
+
+
 def on_control_tree_double_click(app, event) -> None:
     """Gestisce doppio clic sul tree del controllo."""
     selection = app.ctrl_tree.selection()
@@ -111,7 +159,37 @@ def refresh_control_panel(app) -> None:
     for item in app.ctrl_tree.get_children():
         app.ctrl_tree.delete(item)
 
-    data = app.db.get_hierarchical_timesheet_data()
+    # Leggi filtri
+    filter_user_id = None
+    filter_date_from = None
+    filter_date_to = None
+    filters_active = False
+
+    if hasattr(app, "ctrl_filter_date_from"):
+        filter_date_from = _parse_filter_date(app.ctrl_filter_date_from.get())
+        if filter_date_from:
+            filters_active = True
+
+    if hasattr(app, "ctrl_filter_date_to"):
+        filter_date_to = _parse_filter_date(app.ctrl_filter_date_to.get())
+        if filter_date_to:
+            filters_active = True
+
+    if hasattr(app, "ctrl_filter_user"):
+        selected_user = app.ctrl_filter_user.get()
+        if selected_user and selected_user != "Tutti":
+            users = app.db.list_users(include_inactive=False)
+            for u in users:
+                if u["username"] == selected_user:
+                    filter_user_id = u["id"]
+                    filters_active = True
+                    break
+
+    data = app.db.get_hierarchical_timesheet_data(
+        user_id=filter_user_id,
+        date_from=filter_date_from,
+        date_to=filter_date_to,
+    )
 
     for client in data:
         # Formatta date per il cliente
@@ -147,7 +225,7 @@ def refresh_control_panel(app) -> None:
                 "",  # note vuote per cliente
             ),
             tags=("client",),
-            open=False
+            open=filters_active
         )
 
         for project in client["projects"]:
@@ -188,7 +266,7 @@ def refresh_control_panel(app) -> None:
                     "",  # note vuote per commessa
                 ),
                 tags=project_tags,
-                open=False
+                open=filters_active
             )
 
             for activity in project["activities"]:
@@ -229,7 +307,7 @@ def refresh_control_panel(app) -> None:
                         activity.get("schedule_note", ""),  # note dalla schedule
                     ),
                     tags=activity_tags,
-                    open=False
+                    open=filters_active
                 )
 
                 for ts in activity["timesheets"]:

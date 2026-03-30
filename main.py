@@ -3472,6 +3472,51 @@ class TimesheetWindow(QMainWindow):
         btn_pdf = QPushButton("Genera Report PDF")
         btn_pdf.clicked.connect(self.show_pdf_report_dialog)
         header.addWidget(btn_pdf)
+
+        # Separatore
+        from PyQt6.QtWidgets import QFrame
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.VLine)
+        sep.setFrameShadow(QFrame.Shadow.Sunken)
+        header.addWidget(sep)
+
+        # Filtro data Da
+        header.addWidget(QLabel("Da:"))
+        self.ctrl_filter_date_from = QDateEdit()
+        self.ctrl_filter_date_from.setDisplayFormat("dd/MM/yyyy")
+        self.ctrl_filter_date_from.setCalendarPopup(True)
+        self.ctrl_filter_date_from.setSpecialValueText(" ")          # mostra vuoto quando è al minimo
+        self.ctrl_filter_date_from.setMinimumDate(QDate(2000, 1, 1))
+        self.ctrl_filter_date_from.setDate(QDate(2000, 1, 1))        # valore "vuoto" iniziale
+        self.ctrl_filter_date_from.setFixedWidth(110)
+        header.addWidget(self.ctrl_filter_date_from)
+
+        # Filtro data A
+        header.addWidget(QLabel("A:"))
+        self.ctrl_filter_date_to = QDateEdit()
+        self.ctrl_filter_date_to.setDisplayFormat("dd/MM/yyyy")
+        self.ctrl_filter_date_to.setCalendarPopup(True)
+        self.ctrl_filter_date_to.setSpecialValueText(" ")
+        self.ctrl_filter_date_to.setMinimumDate(QDate(2000, 1, 1))
+        self.ctrl_filter_date_to.setDate(QDate(2000, 1, 1))
+        self.ctrl_filter_date_to.setFixedWidth(110)
+        header.addWidget(self.ctrl_filter_date_to)
+
+        # Filtro utente
+        header.addWidget(QLabel("Utente:"))
+        self.ctrl_filter_user = QComboBox()
+        self.ctrl_filter_user.setFixedWidth(140)
+        self._ctrl_populate_user_combo()
+        header.addWidget(self.ctrl_filter_user)
+
+        btn_apply = QPushButton("Applica")
+        btn_apply.clicked.connect(self.refresh_control_panel)
+        header.addWidget(btn_apply)
+
+        btn_reset = QPushButton("Azzera")
+        btn_reset.clicked.connect(self._ctrl_reset_filters)
+        header.addWidget(btn_reset)
+
         header.addStretch(1)
         layout.addLayout(header)
 
@@ -3499,11 +3544,46 @@ class TimesheetWindow(QMainWindow):
         self.ctrl_tree.itemDoubleClicked.connect(lambda item, _col: item.setExpanded(not item.isExpanded()))
         layout.addWidget(self.ctrl_tree, 1)
 
+    def _ctrl_populate_user_combo(self) -> None:
+        self.ctrl_filter_user.clear()
+        self.ctrl_filter_user.addItem("Tutti", userData=None)
+        for u in self.db.list_users(include_inactive=False):
+            self.ctrl_filter_user.addItem(u["username"], userData=u["id"])
+
+    def _ctrl_reset_filters(self) -> None:
+        self.ctrl_filter_date_from.setDate(QDate(2000, 1, 1))
+        self.ctrl_filter_date_to.setDate(QDate(2000, 1, 1))
+        self.ctrl_filter_user.setCurrentIndex(0)
+        self.refresh_control_panel()
+
     def refresh_control_panel(self) -> None:
         if not hasattr(self, "ctrl_tree"):
             return
         self.ctrl_tree.clear()
-        data = self.db.get_hierarchical_timesheet_data()
+
+        # Leggi filtri
+        empty_date = QDate(2000, 1, 1)
+        filter_date_from: str | None = None
+        filter_date_to: str | None = None
+        filter_user_id: int | None = None
+        if hasattr(self, "ctrl_filter_date_from"):
+            d = self.ctrl_filter_date_from.date()
+            if d != empty_date:
+                filter_date_from = d.toString("yyyy-MM-dd")
+        if hasattr(self, "ctrl_filter_date_to"):
+            d = self.ctrl_filter_date_to.date()
+            if d != empty_date:
+                filter_date_to = d.toString("yyyy-MM-dd")
+        if hasattr(self, "ctrl_filter_user"):
+            uid = self.ctrl_filter_user.currentData()
+            if uid is not None:
+                filter_user_id = int(uid)
+
+        data = self.db.get_hierarchical_timesheet_data(
+            user_id=filter_user_id,
+            date_from=filter_date_from,
+            date_to=filter_date_to,
+        )
 
         for client in data:
             client_item = QTreeWidgetItem(

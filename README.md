@@ -1,4 +1,4 @@
-# APP Timesheet - v3.8.3
+# APP Timesheet - v3.8.4
 
 Applicazione desktop Python con UI `PyQt6` per:
 
@@ -7,6 +7,13 @@ Applicazione desktop Python con UI `PyQt6` per:
 - gestione programmazione ore su commessa/attivita
 - strumenti di controllo (consuntivo, pianificato, costi, scostamenti)
 - piattaforma multiutente con ruoli `admin` e `user`
+
+## Novita v3.8.4 — 2026-03-30
+
+- tab Controllo: aggiunto pannello filtri per data (Da / A) e utente.
+- i filtri permettono di isolare gli inserimenti per intervallo di date e/o utente specifico.
+- con "Azzera" i filtri vengono resettati e la vista torna completa.
+- `db.get_hierarchical_timesheet_data()` ora accetta parametri opzionali `user_id`, `date_from`, `date_to`.
 
 ## Novita v3.8.3 — 2026-03-29
 

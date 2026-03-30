@@ -1285,10 +1285,21 @@ class Database:
         
         return result
 
-    def get_hierarchical_timesheet_data(self) -> list[dict[str, Any]]:
-        """Recupera tutti i dati organizzati gerarchicamente con pianificazione: Cliente > Commessa > Attività > Inserimenti."""
+    def get_hierarchical_timesheet_data(
+        self,
+        user_id: int | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Recupera tutti i dati organizzati gerarchicamente con pianificazione: Cliente > Commessa > Attività > Inserimenti.
+
+        Parametri opzionali per filtrare gli inserimenti:
+          user_id   – mostra solo gli inserimenti dell'utente indicato
+          date_from – mostra solo inserimenti con work_date >= date_from (YYYY-MM-DD)
+          date_to   – mostra solo inserimenti con work_date <= date_to   (YYYY-MM-DD)
+        """
         from datetime import datetime, date
-        
+
         # Recupera tutti i clienti che hanno progetti con schedules O timesheet
         clients = self._fetchall(
             """
@@ -1362,15 +1373,18 @@ class Database:
                     project_start_date = project_schedule["start_date"]
                     project_end_date = project_schedule["end_date"]
                     
-                    # Recupera timesheet per l'intero progetto
+                    # Recupera timesheet per l'intero progetto (con filtri opzionali)
                     timesheets_summary = self._fetchone(
                         """
                         SELECT COALESCE(SUM(hours), 0) AS total_hours,
                                COALESCE(SUM(cost), 0) AS total_cost
                         FROM timesheets
                         WHERE project_id = ?
+                          AND (? IS NULL OR user_id = ?)
+                          AND (? IS NULL OR work_date >= ?)
+                          AND (? IS NULL OR work_date <= ?)
                         """,
-                        (project["id"],)
+                        (project["id"], user_id, user_id, date_from, date_from, date_to, date_to)
                     )
                     project_actual_hours = float(timesheets_summary["total_hours"])
                     project_actual_cost = float(timesheets_summary["total_cost"])
@@ -1388,7 +1402,7 @@ class Database:
                         (project["id"], activity["id"])
                     )
                     
-                    # Recupera timesheet per l'attività
+                    # Recupera timesheet per l'attività (con filtri opzionali)
                     timesheets = self._fetchall(
                         """
                         SELECT t.id, t.work_date, t.hours, t.cost, t.note,
@@ -1396,9 +1410,12 @@ class Database:
                         FROM timesheets t
                         JOIN users u ON u.id = t.user_id
                         WHERE t.project_id = ? AND t.activity_id = ?
+                          AND (? IS NULL OR t.user_id = ?)
+                          AND (? IS NULL OR t.work_date >= ?)
+                          AND (? IS NULL OR t.work_date <= ?)
                         ORDER BY t.work_date DESC
                         """,
-                        (project["id"], activity["id"])
+                        (project["id"], activity["id"], user_id, user_id, date_from, date_from, date_to, date_to)
                     )
                     
                     activity_actual_hours = sum(float(ts["hours"]) for ts in timesheets)

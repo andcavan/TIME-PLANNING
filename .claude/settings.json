@@ -14,7 +14,9 @@
       "Bash(rm APP-Timesheet-v3.8.1.spec)",
       "Bash(cp APP-Timesheet-v3.8.2.spec APP-Timesheet-v3.8.3.spec)",
       "Bash(sed -i 's/3\\\\.8\\\\.2/3.8.3/g' APP-Timesheet-v3.8.3.spec)",
-      "Bash(rm APP-Timesheet-v3.8.2.spec)"
+      "Bash(rm APP-Timesheet-v3.8.2.spec)",
+      "Bash(grep -E \"\\\\.\\(py|db|sql\\)$|^d\")",
+      "Bash(find '/c/Users/prog3/Desktop/APP MECCANICA/TIME-PLANNING' -name *.db -o -name *.sqlite*)"
     ]
   }
 }
