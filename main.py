@@ -10,7 +10,7 @@ from typing import Any
 import json
 
 from PyQt6.QtCore import QDate, QTimer, Qt
-from PyQt6.QtGui import QAction, QColor
+from PyQt6.QtGui import QAction, QColor, QPalette
 from PyQt6.QtWidgets import (
     QApplication,
     QCalendarWidget,
@@ -192,6 +192,126 @@ QGroupBox {
 }
 QGroupBox::title { left: 10px; padding: 0 4px; }
 """
+
+
+class PopupCalendarWidget(QCalendarWidget):
+    """QCalendarWidget per popup QDateEdit con paintCell che usa colori hardcoded."""
+
+    _EMPTY = QDate(2000, 1, 1)
+
+    def __init__(self, dark: bool = True, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._dark = dark
+        self._today_btn_added = False
+        self.setVerticalHeaderFormat(QCalendarWidget.VerticalHeaderFormat.NoVerticalHeader)
+        self._apply_nav_style()
+        self._add_today_button()
+
+    def _apply_nav_style(self) -> None:
+        if self._dark:
+            nav = "#313244"; fg = "#cdd6f4"; brd = "#45475a"; sel = "#89b4fa"; sel_fg = "#1e1e2e"; bg_cell = "#181825"
+        else:
+            nav = "#e2e8f0"; fg = "#111827"; brd = "#cbd5e1"; sel = "#2563eb"; sel_fg = "#ffffff"; bg_cell = "#ffffff"
+
+        # Palette — usata da paintCell e QHeaderView per il testo
+        p = QPalette()
+        p.setColor(QPalette.ColorRole.Base,            QColor(bg_cell))
+        p.setColor(QPalette.ColorRole.AlternateBase,   QColor(bg_cell))
+        p.setColor(QPalette.ColorRole.Text,            QColor(fg))
+        p.setColor(QPalette.ColorRole.Window,          QColor(nav))
+        p.setColor(QPalette.ColorRole.WindowText,      QColor(fg))
+        p.setColor(QPalette.ColorRole.Button,          QColor(nav))
+        p.setColor(QPalette.ColorRole.ButtonText,      QColor(fg))
+        p.setColor(QPalette.ColorRole.Highlight,       QColor(sel))
+        p.setColor(QPalette.ColorRole.HighlightedText, QColor(sel_fg))
+        p.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Text, QColor("#6b7280" if self._dark else "#9ca3af"))
+        self.setPalette(p)
+
+        # Stylesheet per barra navigazione
+        self.setStyleSheet(f"""
+QCalendarWidget QWidget#qt_calendar_navigationbar {{ background-color: {nav}; }}
+QCalendarWidget QToolButton {{ background-color: {nav}; color: {fg}; border: 1px solid {brd}; border-radius: 3px; padding: 2px 6px; }}
+QCalendarWidget QToolButton:hover {{ background-color: {sel}; color: {sel_fg}; }}
+QCalendarWidget QSpinBox {{ background-color: {nav}; color: {fg}; border: 1px solid {brd}; padding: 1px 4px; }}
+""")
+        # Stile diretto sul QTableView interno (bypassa globale)
+        table = self.findChild(QTableView, "qt_calendar_calendarview")
+        if table:
+            table.setStyleSheet(f"""
+QTableView {{ background-color: {bg_cell}; gridline-color: {brd}; border: none; }}
+QHeaderView::section {{ background-color: {nav}; color: {fg}; border: 1px solid {brd}; font-weight: bold; font-size: 12px; padding: 2px; }}
+""")
+            table.setPalette(p)
+
+    def _add_today_button(self) -> None:
+        nav = self.findChild(QWidget, "qt_calendar_navigationbar")
+        if nav is None:
+            return
+        nav_layout = nav.layout()
+        if nav_layout is None:
+            return
+        btn = QPushButton("Oggi")
+        btn.setObjectName("btn_today_calendar")
+        btn.setFixedHeight(22)
+        btn.clicked.connect(self._go_today)
+        nav_layout.addWidget(btn)
+        self._today_btn_added = True
+
+    def _go_today(self) -> None:
+        today = QDate.currentDate()
+        self.setSelectedDate(today)
+        self.setCurrentPage(today.year(), today.month())
+
+    def showEvent(self, event) -> None:  # type: ignore[override]
+        super().showEvent(event)
+        # Se data "vuota", naviga al mese corrente senza cambiare la selezione
+        if self.selectedDate() == self._EMPTY:
+            today = QDate.currentDate()
+            self.setCurrentPage(today.year(), today.month())
+        self._apply_nav_style()
+        QTimer.singleShot(0, self._apply_nav_style)
+
+    def paintCell(self, painter, rect, qdate) -> None:  # type: ignore[override]
+        from PyQt6.QtGui import QFont
+        in_month = qdate.month() == self.monthShown()
+        is_sel   = qdate == self.selectedDate()
+        is_today = qdate == QDate.currentDate()
+
+        if self._dark:
+            bg     = QColor("#181825" if in_month else "#121221")
+            fg     = QColor("#cdd6f4" if in_month else "#6b7280")
+            sel_bg = QColor("#89b4fa")
+            sel_fg = QColor("#1e1e2e")
+            tod_bg = QColor("#1d4ed8")
+            tod_fg = QColor("#ffffff")
+            brd    = QColor("#313244")
+        else:
+            bg     = QColor("#ffffff" if in_month else "#f3f4f6")
+            fg     = QColor("#1f2937" if in_month else "#9ca3af")
+            sel_bg = QColor("#2563eb")
+            sel_fg = QColor("#ffffff")
+            tod_bg = QColor("#dbeafe")
+            tod_fg = QColor("#1e40af")
+            brd    = QColor("#e2e8f0")
+
+        cell_bg = sel_bg if is_sel else (tod_bg if is_today else bg)
+        cell_fg = sel_fg if is_sel else (tod_fg if is_today else fg)
+
+        painter.save()
+        painter.fillRect(rect, cell_bg)
+        painter.setPen(brd)
+        painter.drawRect(rect.adjusted(0, 0, -1, -1))
+        painter.setPen(cell_fg)
+        f = QFont(painter.font())
+        f.setBold(is_sel or is_today)
+        painter.setFont(f)
+        painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, str(qdate.day()))
+        painter.restore()
+
+
+def _apply_calendar_popup_palette(date_edit: QDateEdit, dark: bool) -> None:
+    """Assegna un PopupCalendarWidget pre-stilizzato al QDateEdit."""
+    date_edit.setCalendarWidget(PopupCalendarWidget(dark))
 
 
 def _readonly_item(text: Any) -> QTableWidgetItem:
@@ -922,10 +1042,12 @@ class ProjectDialog(QDialog):
         is_new: bool = False,
         client_name: str = "",
         allow_save: bool = True,
+        dark_mode: bool = True,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._allow_save = allow_save
+        self._dark_mode = dark_mode
         self.setWindowTitle("Nuova commessa" if is_new else "Gestione commessa")
         self.setModal(True)
         self.setMinimumWidth(640)
@@ -983,14 +1105,26 @@ class ProjectDialog(QDialog):
         form.addWidget(planning_title, row, 0, 1, 4)
         row += 1
 
-        form.addWidget(QLabel("Data inizio (gg/mm/aaaa)"), row, 0)
-        self.start_date_edit = QLineEdit()
-        self.start_date_edit.setPlaceholderText("gg/mm/aaaa")
+        _EMPTY_DATE = QDate(2000, 1, 1)
+
+        form.addWidget(QLabel("Data inizio"), row, 0)
+        self.start_date_edit = QDateEdit()
+        self.start_date_edit.setDisplayFormat("dd/MM/yyyy")
+        self.start_date_edit.setCalendarPopup(True)
+        self.start_date_edit.setMinimumDate(_EMPTY_DATE)
+        self.start_date_edit.setDate(_EMPTY_DATE)
+        self.start_date_edit.setSpecialValueText(" ")
+        _apply_calendar_popup_palette(self.start_date_edit, self._dark_mode)
         form.addWidget(self.start_date_edit, row, 1)
 
-        form.addWidget(QLabel("Data fine (gg/mm/aaaa)"), row, 2)
-        self.end_date_edit = QLineEdit()
-        self.end_date_edit.setPlaceholderText("gg/mm/aaaa")
+        form.addWidget(QLabel("Data fine"), row, 2)
+        self.end_date_edit = QDateEdit()
+        self.end_date_edit.setDisplayFormat("dd/MM/yyyy")
+        self.end_date_edit.setCalendarPopup(True)
+        self.end_date_edit.setMinimumDate(_EMPTY_DATE)
+        self.end_date_edit.setDate(_EMPTY_DATE)
+        self.end_date_edit.setSpecialValueText(" ")
+        _apply_calendar_popup_palette(self.end_date_edit, self._dark_mode)
         form.addWidget(self.end_date_edit, row, 3)
         row += 1
 
@@ -1004,8 +1138,12 @@ class ProjectDialog(QDialog):
         layout.addLayout(form)
 
         if schedule:
-            self.start_date_edit.setText(self._iso_to_ui(schedule.get("start_date", "")))
-            self.end_date_edit.setText(self._iso_to_ui(schedule.get("end_date", "")))
+            sd = schedule.get("start_date", "")
+            ed = schedule.get("end_date", "")
+            if sd:
+                self.start_date_edit.setDate(QDate.fromString(sd, "yyyy-MM-dd"))
+            if ed:
+                self.end_date_edit.setDate(QDate.fromString(ed, "yyyy-MM-dd"))
             self.hours_edit.setText(str(schedule.get("planned_hours", "")))
             self.budget_edit.setText(str(schedule.get("budget", "")))
 
@@ -1017,6 +1155,12 @@ class ProjectDialog(QDialog):
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
+    @staticmethod
+    def _qdate_to_ui(qd: QDate) -> str:
+        if qd == QDate(2000, 1, 1):
+            return ""
+        return qd.toString("dd/MM/yyyy")
+
     def values(self) -> dict[str, str]:
         return {
             "name": self.name_edit.text().strip(),
@@ -1024,8 +1168,8 @@ class ProjectDialog(QDialog):
             "hourly_rate": self.rate_edit.text().strip(),
             "notes": self.notes_edit.text().strip(),
             "descrizione_commessa": self.desc_edit.toPlainText().strip(),
-            "start_date": self.start_date_edit.text().strip(),
-            "end_date": self.end_date_edit.text().strip(),
+            "start_date": self._qdate_to_ui(self.start_date_edit.date()),
+            "end_date": self._qdate_to_ui(self.end_date_edit.date()),
             "planned_hours": self.hours_edit.text().strip(),
             "budget": self.budget_edit.text().strip(),
         }
@@ -1040,10 +1184,12 @@ class ActivityDialog(QDialog):
         project_label: str = "",
         project_schedule: dict[str, Any] | None = None,
         allow_save: bool = True,
+        dark_mode: bool = True,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._allow_save = allow_save
+        self._dark_mode = dark_mode
         self.setWindowTitle("Nuova attivita" if is_new else "Gestione attivita")
         self.setModal(True)
         self.setMinimumWidth(620)
@@ -1097,14 +1243,26 @@ class ActivityDialog(QDialog):
         form.addWidget(planning_title, row, 0, 1, 4)
         row += 1
 
-        form.addWidget(QLabel("Data inizio (gg/mm/aaaa)"), row, 0)
-        self.start_date_edit = QLineEdit()
-        self.start_date_edit.setPlaceholderText("gg/mm/aaaa")
+        _EMPTY_DATE = QDate(2000, 1, 1)
+
+        form.addWidget(QLabel("Data inizio"), row, 0)
+        self.start_date_edit = QDateEdit()
+        self.start_date_edit.setDisplayFormat("dd/MM/yyyy")
+        self.start_date_edit.setCalendarPopup(True)
+        self.start_date_edit.setMinimumDate(_EMPTY_DATE)
+        self.start_date_edit.setDate(_EMPTY_DATE)
+        self.start_date_edit.setSpecialValueText(" ")
+        _apply_calendar_popup_palette(self.start_date_edit, self._dark_mode)
         form.addWidget(self.start_date_edit, row, 1)
 
-        form.addWidget(QLabel("Data fine (gg/mm/aaaa)"), row, 2)
-        self.end_date_edit = QLineEdit()
-        self.end_date_edit.setPlaceholderText("gg/mm/aaaa")
+        form.addWidget(QLabel("Data fine"), row, 2)
+        self.end_date_edit = QDateEdit()
+        self.end_date_edit.setDisplayFormat("dd/MM/yyyy")
+        self.end_date_edit.setCalendarPopup(True)
+        self.end_date_edit.setMinimumDate(_EMPTY_DATE)
+        self.end_date_edit.setDate(_EMPTY_DATE)
+        self.end_date_edit.setSpecialValueText(" ")
+        _apply_calendar_popup_palette(self.end_date_edit, self._dark_mode)
         form.addWidget(self.end_date_edit, row, 3)
         row += 1
 
@@ -1118,13 +1276,21 @@ class ActivityDialog(QDialog):
         layout.addLayout(form)
 
         if schedule:
-            self.start_date_edit.setText(self._iso_to_ui(schedule.get("start_date", "")))
-            self.end_date_edit.setText(self._iso_to_ui(schedule.get("end_date", "")))
+            sd = schedule.get("start_date", "")
+            ed = schedule.get("end_date", "")
+            if sd:
+                self.start_date_edit.setDate(QDate.fromString(sd, "yyyy-MM-dd"))
+            if ed:
+                self.end_date_edit.setDate(QDate.fromString(ed, "yyyy-MM-dd"))
             self.hours_edit.setText(str(schedule.get("planned_hours", "")))
             self.budget_edit.setText(str(schedule.get("budget", "")))
         elif is_new and project_schedule:
-            self.start_date_edit.setText(self._iso_to_ui(project_schedule.get("start_date", "")))
-            self.end_date_edit.setText(self._iso_to_ui(project_schedule.get("end_date", "")))
+            sd = project_schedule.get("start_date", "")
+            ed = project_schedule.get("end_date", "")
+            if sd:
+                self.start_date_edit.setDate(QDate.fromString(sd, "yyyy-MM-dd"))
+            if ed:
+                self.end_date_edit.setDate(QDate.fromString(ed, "yyyy-MM-dd"))
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         save_button = buttons.button(QDialogButtonBox.StandardButton.Ok)
@@ -1134,13 +1300,19 @@ class ActivityDialog(QDialog):
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
+    @staticmethod
+    def _qdate_to_ui(qd: QDate) -> str:
+        if qd == QDate(2000, 1, 1):
+            return ""
+        return qd.toString("dd/MM/yyyy")
+
     def values(self) -> dict[str, str]:
         return {
             "name": self.name_edit.text().strip(),
             "hourly_rate": self.rate_edit.text().strip(),
             "notes": self.notes_edit.text().strip(),
-            "start_date": self.start_date_edit.text().strip(),
-            "end_date": self.end_date_edit.text().strip(),
+            "start_date": self._qdate_to_ui(self.start_date_edit.date()),
+            "end_date": self._qdate_to_ui(self.end_date_edit.date()),
             "planned_hours": self.hours_edit.text().strip(),
             "budget": self.budget_edit.text().strip(),
         }
@@ -1468,6 +1640,9 @@ class TimesheetWindow(QMainWindow):
         app.setStyleSheet(DARK_THEME if self.is_dark_mode else LIGHT_THEME)
         if hasattr(self, "qt_calendar") and isinstance(self.qt_calendar, HoursCalendarWidget):
             self.qt_calendar.set_theme_mode(self.is_dark_mode)
+        for attr in ("plan_start_date_edit", "plan_end_date_edit", "ctrl_filter_date_from", "ctrl_filter_date_to"):
+            if hasattr(self, attr):
+                _apply_calendar_popup_palette(getattr(self, attr), self.is_dark_mode)
 
     def _build_ui(self) -> None:
         existing = self.centralWidget()
@@ -2723,6 +2898,7 @@ class TimesheetWindow(QMainWindow):
             is_new=True,
             client_name=client.get("name", ""),
             allow_save=True,
+            dark_mode=self.is_dark_mode,
             parent=self,
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:
@@ -2805,6 +2981,7 @@ class TimesheetWindow(QMainWindow):
             is_new=False,
             client_name=project.get("client_name", ""),
             allow_save=not is_closed,
+            dark_mode=self.is_dark_mode,
             parent=self,
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:
@@ -2956,6 +3133,7 @@ class TimesheetWindow(QMainWindow):
             project_label=f"{project.get('client_name', '')} / {project.get('name', '')}",
             project_schedule=project_schedule,
             allow_save=not is_project_closed,
+            dark_mode=self.is_dark_mode,
             parent=self,
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:
@@ -3083,6 +3261,7 @@ class TimesheetWindow(QMainWindow):
             project_label=project_label,
             project_schedule=project_schedule,
             allow_save=not is_project_closed,
+            dark_mode=self.is_dark_mode,
             parent=self,
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:
@@ -3238,6 +3417,7 @@ class TimesheetWindow(QMainWindow):
         self.plan_start_date_edit.setCalendarPopup(True)
         self.plan_start_date_edit.setDisplayFormat("dd/MM/yyyy")
         self.plan_start_date_edit.setDate(_to_qdate(date.today()))
+        _apply_calendar_popup_palette(self.plan_start_date_edit, self.is_dark_mode)
         form.addWidget(self.plan_start_date_edit, 1, 2)
 
         form.addWidget(QLabel("Data fine"), 0, 3)
@@ -3245,6 +3425,7 @@ class TimesheetWindow(QMainWindow):
         self.plan_end_date_edit.setCalendarPopup(True)
         self.plan_end_date_edit.setDisplayFormat("dd/MM/yyyy")
         self.plan_end_date_edit.setDate(_to_qdate(date.today()))
+        _apply_calendar_popup_palette(self.plan_end_date_edit, self.is_dark_mode)
         form.addWidget(self.plan_end_date_edit, 1, 3)
 
         form.addWidget(QLabel("Ore preventivate"), 0, 4)
@@ -3489,6 +3670,7 @@ class TimesheetWindow(QMainWindow):
         self.ctrl_filter_date_from.setMinimumDate(QDate(2000, 1, 1))
         self.ctrl_filter_date_from.setDate(QDate(2000, 1, 1))        # valore "vuoto" iniziale
         self.ctrl_filter_date_from.setFixedWidth(110)
+        _apply_calendar_popup_palette(self.ctrl_filter_date_from, self.is_dark_mode)
         header.addWidget(self.ctrl_filter_date_from)
 
         # Filtro data A
@@ -3500,6 +3682,7 @@ class TimesheetWindow(QMainWindow):
         self.ctrl_filter_date_to.setMinimumDate(QDate(2000, 1, 1))
         self.ctrl_filter_date_to.setDate(QDate(2000, 1, 1))
         self.ctrl_filter_date_to.setFixedWidth(110)
+        _apply_calendar_popup_palette(self.ctrl_filter_date_to, self.is_dark_mode)
         header.addWidget(self.ctrl_filter_date_to)
 
         # Filtro utente
