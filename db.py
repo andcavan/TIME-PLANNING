@@ -394,6 +394,29 @@ class Database:
             self.conn.execute("ALTER TABLE user_project_assignments_new RENAME TO user_project_assignments")
             self.conn.commit()
         
+        # Crea tabella user_cost_rates per storico tariffe costo utenti
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS user_cost_rates (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                hourly_cost REAL    NOT NULL CHECK(hourly_cost > 0),
+                valid_from  TEXT    NOT NULL,
+                created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+                UNIQUE(user_id, valid_from)
+            )
+        """)
+        self.conn.commit()
+
+        # Aggiungi user_cost_rate e user_cost a timesheets
+        cursor = self.conn.execute("PRAGMA table_info(timesheets)")
+        ts_columns = [row[1] for row in cursor.fetchall()]
+        if "user_cost_rate" not in ts_columns:
+            self.conn.execute("ALTER TABLE timesheets ADD COLUMN user_cost_rate REAL NOT NULL DEFAULT 0")
+            self.conn.commit()
+        if "user_cost" not in ts_columns:
+            self.conn.execute("ALTER TABLE timesheets ADD COLUMN user_cost REAL NOT NULL DEFAULT 0")
+            self.conn.commit()
+
         # Crea tabella diary_entries per il diario note/promemoria
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS diary_entries (
@@ -947,6 +970,39 @@ class Database:
             return float(row["project_rate"])
         return float(row["client_rate"])
 
+    def resolve_user_cost_rate(self, user_id: int, work_date: str) -> float:
+        """Restituisce il costo orario dell'utente valido per work_date, oppure 0.0 se non definito."""
+        row = self._fetchone(
+            """
+            SELECT hourly_cost FROM user_cost_rates
+            WHERE user_id = ? AND valid_from <= ?
+            ORDER BY valid_from DESC LIMIT 1
+            """,
+            (user_id, work_date),
+        )
+        return float(row["hourly_cost"]) if row else 0.0
+
+    def add_user_cost_rate(self, user_id: int, hourly_cost: float, valid_from: str) -> None:
+        self.conn.execute(
+            """
+            INSERT INTO user_cost_rates (user_id, hourly_cost, valid_from)
+            VALUES (?, ?, ?)
+            ON CONFLICT(user_id, valid_from) DO UPDATE SET hourly_cost = excluded.hourly_cost
+            """,
+            (user_id, hourly_cost, valid_from),
+        )
+        self.conn.commit()
+
+    def list_user_cost_rates(self, user_id: int) -> list[dict]:
+        return self._fetchall(
+            "SELECT id, hourly_cost, valid_from FROM user_cost_rates WHERE user_id = ? ORDER BY valid_from DESC",
+            (user_id,),
+        )
+
+    def delete_user_cost_rate(self, rate_id: int) -> None:
+        self.conn.execute("DELETE FROM user_cost_rates WHERE id = ?", (rate_id,))
+        self.conn.commit()
+
     def add_timesheet(
         self,
         user_id: int,
@@ -959,15 +1015,17 @@ class Database:
     ) -> None:
         rate = self.resolve_effective_rate(client_id, project_id, activity_id)
         cost = round(hours * rate, 2)
+        user_cost_rate = self.resolve_user_cost_rate(user_id, work_date)
+        user_cost = round(hours * user_cost_rate, 2) if user_cost_rate else 0.0
         self.conn.execute(
             """
             INSERT INTO timesheets (
                 user_id, work_date, client_id, project_id, activity_id,
-                hours, note, effective_rate, cost
+                hours, note, effective_rate, cost, user_cost_rate, user_cost
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (user_id, work_date, client_id, project_id, activity_id, hours, note.strip(), rate, cost),
+            (user_id, work_date, client_id, project_id, activity_id, hours, note.strip(), rate, cost, user_cost_rate, user_cost),
         )
         self.conn.commit()
 
@@ -985,25 +1043,29 @@ class Database:
     ) -> None:
         rate = self.resolve_effective_rate(client_id, project_id, activity_id)
         cost = round(hours * rate, 2)
+        user_cost_rate = self.resolve_user_cost_rate(user_id, work_date)
+        user_cost = round(hours * user_cost_rate, 2) if user_cost_rate else 0.0
         if is_admin:
             cursor = self.conn.execute(
                 """
                 UPDATE timesheets
                 SET work_date = ?, client_id = ?, project_id = ?, activity_id = ?,
-                    hours = ?, note = ?, effective_rate = ?, cost = ?
+                    hours = ?, note = ?, effective_rate = ?, cost = ?,
+                    user_cost_rate = ?, user_cost = ?
                 WHERE id = ?
                 """,
-                (work_date, client_id, project_id, activity_id, hours, note.strip(), rate, cost, entry_id),
+                (work_date, client_id, project_id, activity_id, hours, note.strip(), rate, cost, user_cost_rate, user_cost, entry_id),
             )
         else:
             cursor = self.conn.execute(
                 """
                 UPDATE timesheets
                 SET work_date = ?, client_id = ?, project_id = ?, activity_id = ?,
-                    hours = ?, note = ?, effective_rate = ?, cost = ?
+                    hours = ?, note = ?, effective_rate = ?, cost = ?,
+                    user_cost_rate = ?, user_cost = ?
                 WHERE id = ? AND user_id = ?
                 """,
-                (work_date, client_id, project_id, activity_id, hours, note.strip(), rate, cost, entry_id, user_id),
+                (work_date, client_id, project_id, activity_id, hours, note.strip(), rate, cost, user_cost_rate, user_cost, entry_id, user_id),
             )
         if cursor.rowcount == 0:
             raise ValueError("Voce ore non trovata o non autorizzata.")
@@ -1030,6 +1092,7 @@ class Database:
             f"""
             SELECT t.id, t.user_id, t.client_id, t.project_id, t.activity_id,
                    t.work_date, t.hours, t.note, t.effective_rate, t.cost,
+                   t.user_cost_rate, t.user_cost,
                    u.username,
                    c.name AS client_name,
                    p.name AS project_name,
@@ -1363,6 +1426,7 @@ class Database:
                 project_actual_hours = 0.0
                 project_budget = 0.0
                 project_actual_cost = 0.0
+                project_user_cost = 0.0
                 project_start_date = None
                 project_end_date = None
                 
@@ -1405,7 +1469,7 @@ class Database:
                     # Recupera timesheet per l'attività (con filtri opzionali)
                     timesheets = self._fetchall(
                         """
-                        SELECT t.id, t.work_date, t.hours, t.cost, t.note,
+                        SELECT t.id, t.work_date, t.hours, t.cost, t.user_cost_rate, t.user_cost, t.note,
                                u.username, u.full_name
                         FROM timesheets t
                         JOIN users u ON u.id = t.user_id
@@ -1417,9 +1481,10 @@ class Database:
                         """,
                         (project["id"], activity["id"], user_id, user_id, date_from, date_from, date_to, date_to)
                     )
-                    
+
                     activity_actual_hours = sum(float(ts["hours"]) for ts in timesheets)
                     activity_actual_cost = sum(float(ts["cost"]) for ts in timesheets)
+                    activity_user_cost = sum(float(ts.get("user_cost", 0) or 0) for ts in timesheets)
                     
                     activity_data = {
                         "id": activity["id"],
@@ -1427,6 +1492,7 @@ class Database:
                         "hourly_rate": activity["hourly_rate"],
                         "actual_hours": activity_actual_hours,
                         "actual_cost": activity_actual_cost,
+                        "user_cost": activity_user_cost,
                         "timesheets": timesheets
                     }
                     
@@ -1478,7 +1544,7 @@ class Database:
                         if activity_data["budget"] > 0:
                             project_budget += activity_data["budget"]
                         project_actual_cost += activity_actual_cost
-                        
+
                         # Aggregazione date (prendi la più recente)
                         if activity_data["start_date"]:
                             if not project_start_date or activity_data["start_date"] < project_start_date:
@@ -1486,6 +1552,8 @@ class Database:
                         if activity_data["end_date"]:
                             if not project_end_date or activity_data["end_date"] > project_end_date:
                                 project_end_date = activity_data["end_date"]
+
+                    project_user_cost += activity_user_cost
                 
                 # Calcola dati aggregati del progetto
                 project_hours_diff = project_planned_hours - project_actual_hours
@@ -1514,6 +1582,7 @@ class Database:
                     "hours_diff": project_hours_diff,
                     "budget": project_budget,
                     "actual_cost": project_actual_cost,
+                    "user_cost": project_user_cost,
                     "budget_remaining": project_budget_remaining,
                     "remaining_days": project_remaining_days,
                     "working_days": project_working_days,
@@ -1529,6 +1598,7 @@ class Database:
             client_hours_diff = client_planned_hours - client_actual_hours
             client_budget = sum(p["budget"] for p in projects_data)
             client_actual_cost = sum(p["actual_cost"] for p in projects_data)
+            client_user_cost = sum(p["user_cost"] for p in projects_data)
             client_budget_remaining = client_budget - client_actual_cost
             
             # Data più recente per il cliente
@@ -1559,6 +1629,7 @@ class Database:
                 "hours_diff": client_hours_diff,
                 "budget": client_budget,
                 "actual_cost": client_actual_cost,
+                "user_cost": client_user_cost,
                 "budget_remaining": client_budget_remaining,
                 "remaining_days": client_remaining_days,
                 "working_days": client_working_days,

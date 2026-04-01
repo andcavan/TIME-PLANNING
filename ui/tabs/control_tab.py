@@ -63,8 +63,11 @@ def build_control_tab(app) -> None:
         "start_date", "end_date", "working_days", "remaining_days",
         "planned_hours", "actual_hours", "hours_diff",
         "budget", "actual_cost", "budget_remaining",
+        "user_cost", "margin",
         "user", "date", "note"
     )
+
+    is_admin = getattr(app, "is_admin", False)
 
     # Usa show="tree headings" per struttura gerarchica
     app.ctrl_tree = ttk.Treeview(table_frame, columns=columns, show="tree headings", selectmode="browse")
@@ -78,8 +81,10 @@ def build_control_tab(app) -> None:
     app.ctrl_tree.heading("actual_hours", text="Ore effett.")
     app.ctrl_tree.heading("hours_diff", text="Diff. ore")
     app.ctrl_tree.heading("budget", text="Budget €")
-    app.ctrl_tree.heading("actual_cost", text="Costo €")
+    app.ctrl_tree.heading("actual_cost", text="Ricavo €")
     app.ctrl_tree.heading("budget_remaining", text="Budget rest. €")
+    app.ctrl_tree.heading("user_cost", text="Costo ut. €")
+    app.ctrl_tree.heading("margin", text="Margine €")
     app.ctrl_tree.heading("user", text="Utente")
     app.ctrl_tree.heading("date", text="Data")
     app.ctrl_tree.heading("note", text="Note")
@@ -96,6 +101,8 @@ def build_control_tab(app) -> None:
     app.ctrl_tree.column("budget", width=90, anchor="e")
     app.ctrl_tree.column("actual_cost", width=90, anchor="e")
     app.ctrl_tree.column("budget_remaining", width=110, anchor="e")
+    app.ctrl_tree.column("user_cost", width=100 if is_admin else 0, minwidth=0, anchor="e")
+    app.ctrl_tree.column("margin", width=100 if is_admin else 0, minwidth=0, anchor="e")
     app.ctrl_tree.column("user", width=100, anchor="w")
     app.ctrl_tree.column("date", width=80, anchor="center")
     app.ctrl_tree.column("note", width=150, anchor="w")
@@ -156,6 +163,8 @@ def refresh_control_panel(app) -> None:
     if not hasattr(app, "ctrl_tree"):
         return
 
+    is_admin = getattr(app, "is_admin", False)
+
     for item in app.ctrl_tree.get_children():
         app.ctrl_tree.delete(item)
 
@@ -203,6 +212,11 @@ def refresh_control_panel(app) -> None:
 
         # Inserisci il cliente
         client_id = f"client_{client['id']}"
+        c_user_cost = float(client.get("user_cost", 0) or 0)
+        c_ricavo = float(client.get("actual_cost", 0) or 0)
+        c_margin_str = f"{c_ricavo - c_user_cost:.2f}" if is_admin else ""
+        c_user_cost_str = f"{c_user_cost:.2f}" if is_admin else ""
+
         app.ctrl_tree.insert(
             "",
             "end",
@@ -220,6 +234,8 @@ def refresh_control_panel(app) -> None:
                 f"{client['budget']:.2f}" if client['budget'] > 0 else "",
                 f"{client['actual_cost']:.2f}",
                 client_budget_text,
+                c_user_cost_str,
+                c_margin_str,
                 "",  # utente vuoto per cliente
                 "",  # data vuota per cliente
                 "",  # note vuote per cliente
@@ -244,6 +260,11 @@ def refresh_control_panel(app) -> None:
 
             # Inserisci la commessa sotto il cliente
             project_id = f"project_{project['id']}"
+            p_user_cost = float(project.get("user_cost", 0) or 0)
+            p_ricavo = float(project.get("actual_cost", 0) or 0)
+            p_margin_str = f"{p_ricavo - p_user_cost:.2f}" if is_admin else ""
+            p_user_cost_str = f"{p_user_cost:.2f}" if is_admin else ""
+
             app.ctrl_tree.insert(
                 client_id,
                 "end",
@@ -261,6 +282,8 @@ def refresh_control_panel(app) -> None:
                     f"{project['budget']:.2f}" if project['budget'] > 0 else "",
                     f"{project['actual_cost']:.2f}",
                     project_budget_text,
+                    p_user_cost_str,
+                    p_margin_str,
                     "",  # utente vuoto per commessa
                     "",  # data vuota per commessa
                     "",  # note vuote per commessa
@@ -285,6 +308,11 @@ def refresh_control_panel(app) -> None:
 
                 # Inserisci l'attività sotto la commessa
                 activity_id = f"activity_{activity['id']}"
+                a_user_cost = float(activity.get("user_cost", 0) or 0)
+                a_ricavo = float(activity.get("actual_cost", 0) or 0)
+                a_margin_str = f"{a_ricavo - a_user_cost:.2f}" if is_admin else ""
+                a_user_cost_str = f"{a_user_cost:.2f}" if is_admin else ""
+
                 app.ctrl_tree.insert(
                     project_id,
                     "end",
@@ -302,6 +330,8 @@ def refresh_control_panel(app) -> None:
                         f"{activity.get('budget', 0):.2f}" if activity.get('budget', 0) > 0 else "",
                         f"{activity['actual_cost']:.2f}",
                         activity_budget_text,
+                        a_user_cost_str,
+                        a_margin_str,
                         "",  # utente vuoto per attività
                         "",  # data vuota per attività
                         activity.get("schedule_note", ""),  # note dalla schedule
@@ -313,6 +343,12 @@ def refresh_control_panel(app) -> None:
                 for ts in activity["timesheets"]:
                     # Inserisci i timesheet sotto l'attività
                     work_date_display = format_date_short(ts["work_date"])
+
+                    ts_user_cost = float(ts.get("user_cost", 0) or 0)
+                    ts_ricavo = float(ts.get("cost", 0) or 0)
+                    ts_ucr = float(ts.get("user_cost_rate", 0) or 0)
+                    ts_user_cost_str = f"{ts_user_cost:.2f}" if (is_admin and ts_ucr > 0) else ("N/D" if is_admin else "")
+                    ts_margin_str = f"{ts_ricavo - ts_user_cost:.2f}" if (is_admin and ts_ucr > 0) else ("N/D" if is_admin else "")
 
                     timesheet_id = f"timesheet_{ts['id']}"
                     app.ctrl_tree.insert(
@@ -332,6 +368,8 @@ def refresh_control_panel(app) -> None:
                             "",  # budget vuoto
                             f"{ts['cost']:.2f}",
                             "",  # budget rest. vuoto
+                            ts_user_cost_str,
+                            ts_margin_str,
                             ts["username"],
                             work_date_display,
                             ts["note"],

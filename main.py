@@ -1741,6 +1741,29 @@ class TimesheetWindow(QMainWindow):
         except Exception:
             return None
 
+    @staticmethod
+    def _id_from_combo(combo: QComboBox) -> int | None:
+        data = combo.currentData()
+        if data is None:
+            return None
+        try:
+            return int(data)
+        except Exception:
+            return None
+
+    def _set_combo_items(self, combo: QComboBox, items: list[tuple[str, Any]]) -> None:
+        current_data = combo.currentData()
+        combo.blockSignals(True)
+        combo.clear()
+        for label, data in items:
+            combo.addItem(label, data)
+        if current_data is not None:
+            for i in range(combo.count()):
+                if combo.itemData(i) == current_data:
+                    combo.setCurrentIndex(i)
+                    break
+        combo.blockSignals(False)
+
     def _set_combo_values(self, combo: QComboBox, values: list[str]) -> None:
         safe_values = values or [""]
         current = combo.currentText()
@@ -1937,6 +1960,13 @@ class TimesheetWindow(QMainWindow):
                 return
         combo.addItem(value)
 
+    @staticmethod
+    def _set_combo_by_id(combo: QComboBox, item_id: int) -> None:
+        for i in range(combo.count()):
+            if combo.itemData(i) == item_id:
+                combo.setCurrentIndex(i)
+                return
+
     def _parse_ui_date(self, value: str, field_name: str) -> str:
         try:
             return datetime.strptime(value.strip(), "%d/%m/%Y").strftime("%Y-%m-%d")
@@ -2087,9 +2117,9 @@ class TimesheetWindow(QMainWindow):
         self.day_total_label = QLabel("Totale giornata: 0.00 h")
         right_layout.addWidget(self.day_total_label)
 
-        self.ts_table = QTableWidget(0, 9 if self.is_admin else 7)
+        self.ts_table = QTableWidget(0, 11 if self.is_admin else 7)
         headers = (
-            ["ID", "Utente", "Cliente", "Commessa", "Attivita", "Ore", "Tariffa", "Costo", "Note"]
+            ["ID", "Utente", "Cliente", "Commessa", "Attivita", "Ore", "Tariffa", "Ricavo", "Costo ut.", "Margine", "Note"]
             if self.is_admin
             else ["ID", "Utente", "Cliente", "Commessa", "Attivita", "Ore", "Note"]
         )
@@ -2174,7 +2204,7 @@ class TimesheetWindow(QMainWindow):
         return int(self.current_user["id"])
 
     def on_timesheet_client_change(self, _value: str) -> None:
-        client_id = self._id_from_option(self.ts_client_combo.currentText())
+        client_id = self._id_from_combo(self.ts_client_combo)
         if client_id:
             user_id = None if self.is_admin else int(self.current_user["id"])
             today = date.today().isoformat()
@@ -2184,14 +2214,14 @@ class TimesheetWindow(QMainWindow):
                 user_id=user_id,
                 available_from_date=today,
             )
-            self._set_combo_values(self.ts_project_combo, [""] + [self._project_option(p) for p in projects])
+            self._set_combo_items(self.ts_project_combo, [("", None)] + [(p["name"], p["id"]) for p in projects])
             self.ts_project_combo.setCurrentIndex(0)
         else:
-            self._set_combo_values(self.ts_project_combo, [""])
-        self._set_combo_values(self.ts_activity_combo, [""])
+            self._set_combo_items(self.ts_project_combo, [("", None)])
+        self._set_combo_items(self.ts_activity_combo, [("", None)])
 
     def on_timesheet_project_change(self, _value: str) -> None:
-        project_id = self._id_from_option(self.ts_project_combo.currentText())
+        project_id = self._id_from_combo(self.ts_project_combo)
         if project_id:
             today = date.today().isoformat()
             activities = self.db.list_activities(
@@ -2200,17 +2230,17 @@ class TimesheetWindow(QMainWindow):
                 available_from_date=today,
                 user_id=self._filter_uid,
             )
-            self._set_combo_values(self.ts_activity_combo, [""] + [self._activity_option(a) for a in activities])
+            self._set_combo_items(self.ts_activity_combo, [("", None)] + [(a["name"], a["id"]) for a in activities])
             self.ts_activity_combo.setCurrentIndex(0)
         else:
-            self._set_combo_values(self.ts_activity_combo, [""])
+            self._set_combo_items(self.ts_activity_combo, [("", None)])
 
     def save_timesheet_entry(self) -> None:
         try:
             user_id = self._selected_timesheet_user_id()
-            client_id = self._id_from_option(self.ts_client_combo.currentText())
-            project_id = self._id_from_option(self.ts_project_combo.currentText())
-            activity_id = self._id_from_option(self.ts_activity_combo.currentText())
+            client_id = self._id_from_combo(self.ts_client_combo)
+            project_id = self._id_from_combo(self.ts_project_combo)
+            activity_id = self._id_from_combo(self.ts_activity_combo)
             if not (client_id and project_id and activity_id):
                 raise ValueError("Seleziona cliente, commessa e attivita.")
 
@@ -2253,16 +2283,23 @@ class TimesheetWindow(QMainWindow):
         rows = self.db.list_timesheets_for_day(self.selected_date.isoformat(), user_id=user_id)
         total_hours = 0.0
         total_cost = 0.0
+        total_user_cost = 0.0
 
         for row in rows:
             entry_id = int(row["id"])
             self._timesheet_rows_by_id[entry_id] = row
             total_hours += float(row["hours"])
             total_cost += float(row["cost"])
+            total_user_cost += float(row.get("user_cost", 0) or 0)
 
             idx = self.ts_table.rowCount()
             self.ts_table.insertRow(idx)
             if self.is_admin:
+                ucr = float(row.get("user_cost_rate", 0) or 0)
+                uc = float(row.get("user_cost", 0) or 0)
+                ricavo = float(row["cost"])
+                costo_ut = f"{uc:.2f}" if ucr > 0 else "N/D"
+                margine = f"{ricavo - uc:.2f}" if ucr > 0 else "N/D"
                 data = [
                     entry_id,
                     row["username"],
@@ -2271,7 +2308,9 @@ class TimesheetWindow(QMainWindow):
                     row["activity_name"],
                     f"{row['hours']:.2f}",
                     f"{row['effective_rate']:.2f}",
-                    f"{row['cost']:.2f}",
+                    f"{ricavo:.2f}",
+                    costo_ut,
+                    margine,
                     row["note"] or "",
                 ]
             else:
@@ -2288,7 +2327,10 @@ class TimesheetWindow(QMainWindow):
                 self.ts_table.setItem(idx, col, _readonly_item(value))
 
         if self.is_admin:
-            self.day_total_label.setText(f"Totale giornata: {total_hours:.2f} h | {total_cost:.2f} EUR")
+            margine_totale = total_cost - total_user_cost
+            self.day_total_label.setText(
+                f"Totale giornata: {total_hours:.2f} h | Ricavo: {total_cost:.2f} € | Costo: {total_user_cost:.2f} € | Margine: {margine_totale:.2f} €"
+            )
         else:
             self.day_total_label.setText(f"Totale giornata: {total_hours:.2f} h")
 
@@ -2300,23 +2342,11 @@ class TimesheetWindow(QMainWindow):
         if not row:
             return
 
-        client_option = self._entity_option(row["client_id"], row["client_name"])
-        self._ensure_combo_option(self.ts_client_combo, client_option)
-        self.ts_client_combo.setCurrentText(client_option)
-        self.on_timesheet_client_change(client_option)
-
-        project_option = self._project_option(
-            {"id": row["project_id"], "client_name": row["client_name"], "name": row["project_name"]}
-        )
-        self._ensure_combo_option(self.ts_project_combo, project_option)
-        self.ts_project_combo.setCurrentText(project_option)
-        self.on_timesheet_project_change(project_option)
-
-        activity_option = self._activity_option(
-            {"id": row["activity_id"], "project_name": row["project_name"], "name": row["activity_name"]}
-        )
-        self._ensure_combo_option(self.ts_activity_combo, activity_option)
-        self.ts_activity_combo.setCurrentText(activity_option)
+        self._set_combo_by_id(self.ts_client_combo, row["client_id"])
+        self.on_timesheet_client_change(self.ts_client_combo.currentText())
+        self._set_combo_by_id(self.ts_project_combo, row["project_id"])
+        self.on_timesheet_project_change(self.ts_project_combo.currentText())
+        self._set_combo_by_id(self.ts_activity_combo, row["activity_id"])
 
         self.ts_hours_entry.setText(f"{float(row['hours']):.2f}")
         self.ts_note_text.setPlainText(row.get("note", "") or "")
@@ -2328,9 +2358,9 @@ class TimesheetWindow(QMainWindow):
             return
         try:
             user_id = self._selected_timesheet_user_id()
-            client_id = self._id_from_option(self.ts_client_combo.currentText())
-            project_id = self._id_from_option(self.ts_project_combo.currentText())
-            activity_id = self._id_from_option(self.ts_activity_combo.currentText())
+            client_id = self._id_from_combo(self.ts_client_combo)
+            project_id = self._id_from_combo(self.ts_project_combo)
+            activity_id = self._id_from_combo(self.ts_activity_combo)
             if not (client_id and project_id and activity_id):
                 raise ValueError("Seleziona cliente, commessa e attivita.")
 
@@ -4150,6 +4180,8 @@ class TimesheetWindow(QMainWindow):
         actions.addStretch(1)
         layout.addLayout(actions)
 
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+
         self.users_table = QTableWidget(0, 5)
         self.users_table.setHorizontalHeaderLabels(["ID", "Username", "Nome", "Ruolo", "Attivo"])
         self.users_table.setAlternatingRowColors(True)
@@ -4157,7 +4189,48 @@ class TimesheetWindow(QMainWindow):
         self.users_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
         self.users_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.users_table.itemSelectionChanged.connect(self.on_user_select)
-        layout.addWidget(self.users_table, 1)
+        splitter.addWidget(self.users_table)
+
+        cost_group = QGroupBox("Costo orario utente (storico)")
+        cost_layout = QVBoxLayout(cost_group)
+
+        self.user_cost_rates_table = QTableWidget(0, 3)
+        self.user_cost_rates_table.setHorizontalHeaderLabels(["ID", "Valido dal", "Costo €/h"])
+        self.user_cost_rates_table.setAlternatingRowColors(True)
+        self.user_cost_rates_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.user_cost_rates_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self.user_cost_rates_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        ucr_header = self.user_cost_rates_table.horizontalHeader()
+        if ucr_header:
+            ucr_header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        cost_layout.addWidget(self.user_cost_rates_table, 1)
+
+        add_rate_row = QHBoxLayout()
+        add_rate_row.addWidget(QLabel("Valido dal:"))
+        self.cost_rate_date_edit = QDateEdit()
+        self.cost_rate_date_edit.setDisplayFormat("dd/MM/yyyy")
+        self.cost_rate_date_edit.setDate(QDate.currentDate())
+        self.cost_rate_date_edit.setCalendarPopup(True)
+        add_rate_row.addWidget(self.cost_rate_date_edit)
+        add_rate_row.addWidget(QLabel("Costo €/h:"))
+        self.cost_rate_value_entry = QLineEdit()
+        self.cost_rate_value_entry.setPlaceholderText("es. 25.00")
+        self.cost_rate_value_entry.setFixedWidth(80)
+        add_rate_row.addWidget(self.cost_rate_value_entry)
+        btn_add_rate = QPushButton("Aggiungi tariffa")
+        self._set_button_role(btn_add_rate, "btn_primary")
+        btn_add_rate.clicked.connect(self.add_user_cost_rate_ui)
+        add_rate_row.addWidget(btn_add_rate)
+        btn_del_rate = QPushButton("Elimina selezionata")
+        btn_del_rate.clicked.connect(self.delete_user_cost_rate_ui)
+        add_rate_row.addWidget(btn_del_rate)
+        add_rate_row.addStretch(1)
+        cost_layout.addLayout(add_rate_row)
+
+        splitter.addWidget(cost_group)
+        splitter.setStretchFactor(0, 2)
+        splitter.setStretchFactor(1, 1)
+        layout.addWidget(splitter, 1)
 
     def on_user_select(self) -> None:
         if not self.is_admin or not hasattr(self, "users_table"):
@@ -4173,6 +4246,51 @@ class TimesheetWindow(QMainWindow):
         self.tab_master_check.setChecked(bool(selected.get("tab_master", 1)))
         self.tab_control_check.setChecked(bool(selected.get("tab_control", 1)))
         self.tab_diary_check.setChecked(bool(selected.get("tab_diary", 1)))
+        self.refresh_user_cost_rates()
+
+    def refresh_user_cost_rates(self) -> None:
+        if not hasattr(self, "user_cost_rates_table"):
+            return
+        user_id = self._selected_table_id(self.users_table)
+        self.user_cost_rates_table.setRowCount(0)
+        if not user_id:
+            return
+        rates = self.db.list_user_cost_rates(user_id)
+        for rate in rates:
+            idx = self.user_cost_rates_table.rowCount()
+            self.user_cost_rates_table.insertRow(idx)
+            valid_from_display = rate["valid_from"]
+            try:
+                from datetime import datetime as _dt
+                valid_from_display = _dt.strptime(rate["valid_from"], "%Y-%m-%d").strftime("%d/%m/%Y")
+            except Exception:
+                pass
+            for col, val in enumerate([rate["id"], valid_from_display, f"{rate['hourly_cost']:.2f}"]):
+                self.user_cost_rates_table.setItem(idx, col, _readonly_item(val))
+
+    def add_user_cost_rate_ui(self) -> None:
+        user_id = self._selected_table_id(self.users_table)
+        if not user_id:
+            QMessageBox.warning(self, "Costo orario", "Seleziona prima un utente.")
+            return
+        try:
+            cost = self._to_float(self.cost_rate_value_entry.text().strip(), "Costo €/h")
+            if cost <= 0:
+                raise ValueError("Il costo deve essere maggiore di zero.")
+            valid_from = self.cost_rate_date_edit.date().toString("yyyy-MM-dd")
+            self.db.add_user_cost_rate(user_id, cost, valid_from)
+            self.cost_rate_value_entry.clear()
+            self.refresh_user_cost_rates()
+        except (ValueError, Exception) as exc:
+            QMessageBox.critical(self, "Costo orario", str(exc))
+
+    def delete_user_cost_rate_ui(self) -> None:
+        rate_id = self._selected_table_id(self.user_cost_rates_table)
+        if not rate_id:
+            QMessageBox.warning(self, "Costo orario", "Seleziona una tariffa da eliminare.")
+            return
+        self.db.delete_user_cost_rate(rate_id)
+        self.refresh_user_cost_rates()
 
     def save_user_tabs(self) -> None:
         user_id = self._selected_table_id(self.users_table)
@@ -4309,7 +4427,7 @@ class TimesheetWindow(QMainWindow):
         client_values = [self._entity_option(c["id"], c["name"]) for c in clients]
 
         if hasattr(self, "ts_client_combo"):
-            self._set_combo_values(self.ts_client_combo, [""] + client_values)
+            self._set_combo_items(self.ts_client_combo, [("", None)] + [(c["name"], c["id"]) for c in clients])
             self.on_timesheet_client_change(self.ts_client_combo.currentText())
         if hasattr(self, "pm_client_combo"):
             current = self.pm_client_combo.currentText()

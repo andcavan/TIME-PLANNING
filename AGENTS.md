@@ -17,7 +17,6 @@ Le regole locali di progetto possono sovrascrivere queste istruzioni.
 - Suggerisci miglioramenti o alternative alle mie richieste.
 - Ad ogni versione aggiorna il readme
 
-
 ## Codice
 - Mantieni modifiche piccole e focalizzate.
 - Non cambiare parti non richieste.
@@ -27,8 +26,11 @@ Le regole locali di progetto possono sovrascrivere queste istruzioni.
 - se presente aggiorna sempre il manuale dell'app
 - aggiornare sempre il file readme con descrizione modifica o aggiunta, versione e date
 
-
 ## Output
 - Usa riferimenti file con path cliccabile quando spieghi modifiche.
 - Se ci sono rischi o limiti, dichiarali in modo esplicito.
 - Se utile, proponi massimo 3 prossimi passi numerati.
+
+## Strutturazione
+- Python - Linguaggio programmazione
+- PyQt6 – interfaccia grafica
