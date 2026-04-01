@@ -1691,6 +1691,11 @@ class TimesheetWindow(QMainWindow):
             self._diary_tab_index = self.tabview.addTab(self.tab_diary, "Diario")
             self.build_diary_tab()
 
+        if self._tab_enabled("tab_user_hours"):
+            self.tab_user_hours = QWidget()
+            self.tabview.addTab(self.tab_user_hours, "Gestione Ore Utenti")
+            self.build_user_hours_tab()
+
         self.refresh_master_data()
         self.refresh_day_entries()
         self.refresh_schedule_list()
@@ -4098,6 +4103,358 @@ class TimesheetWindow(QMainWindow):
             self.refresh_diary_data()
             self.update_diary_alert()
 
+    # Gestione Ore Utenti
+    def build_user_hours_tab(self) -> None:
+        layout = QVBoxLayout(self.tab_user_hours)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(6)
+
+        # ── Riga filtri ──────────────────────────────────────────────────────
+        filter_row = QHBoxLayout()
+        filter_row.setSpacing(6)
+
+        filter_row.addWidget(QLabel("Da:"))
+        self.uh_date_from = QDateEdit()
+        self.uh_date_from.setDisplayFormat("dd/MM/yyyy")
+        self.uh_date_from.setCalendarPopup(True)
+        self.uh_date_from.setSpecialValueText(" ")
+        self.uh_date_from.setMinimumDate(QDate(2000, 1, 1))
+        self.uh_date_from.setDate(QDate(2000, 1, 1))
+        self.uh_date_from.setFixedWidth(110)
+        _apply_calendar_popup_palette(self.uh_date_from, self.is_dark_mode)
+        filter_row.addWidget(self.uh_date_from)
+
+        filter_row.addWidget(QLabel("A:"))
+        self.uh_date_to = QDateEdit()
+        self.uh_date_to.setDisplayFormat("dd/MM/yyyy")
+        self.uh_date_to.setCalendarPopup(True)
+        self.uh_date_to.setSpecialValueText(" ")
+        self.uh_date_to.setMinimumDate(QDate(2000, 1, 1))
+        self.uh_date_to.setDate(QDate(2000, 1, 1))
+        self.uh_date_to.setFixedWidth(110)
+        _apply_calendar_popup_palette(self.uh_date_to, self.is_dark_mode)
+        filter_row.addWidget(self.uh_date_to)
+
+        filter_row.addWidget(QLabel("Utente:"))
+        self.uh_user_combo = QComboBox()
+        self.uh_user_combo.setFixedWidth(140)
+        all_users = self.db.list_users(include_inactive=True)
+        self._set_combo_items(self.uh_user_combo, [("Tutti", None)] + [(u["full_name"] or u["username"], u["id"]) for u in all_users])
+        filter_row.addWidget(self.uh_user_combo)
+
+        filter_row.addWidget(QLabel("Cliente:"))
+        self.uh_client_combo = QComboBox()
+        self.uh_client_combo.setFixedWidth(140)
+        self.uh_client_combo.currentIndexChanged.connect(self._uh_on_client_change)
+        filter_row.addWidget(self.uh_client_combo)
+
+        filter_row.addWidget(QLabel("Commessa:"))
+        self.uh_project_combo = QComboBox()
+        self.uh_project_combo.setFixedWidth(140)
+        self.uh_project_combo.currentIndexChanged.connect(self._uh_on_project_change)
+        filter_row.addWidget(self.uh_project_combo)
+
+        filter_row.addWidget(QLabel("Attività:"))
+        self.uh_activity_combo = QComboBox()
+        self.uh_activity_combo.setFixedWidth(140)
+        filter_row.addWidget(self.uh_activity_combo)
+
+        btn_apply = QPushButton("Applica")
+        btn_apply.clicked.connect(self.refresh_user_hours_data)
+        filter_row.addWidget(btn_apply)
+
+        btn_reset = QPushButton("Azzera")
+        btn_reset.clicked.connect(self._uh_reset_filters)
+        filter_row.addWidget(btn_reset)
+
+        filter_row.addStretch(1)
+        layout.addLayout(filter_row)
+
+        # ── Tabella ──────────────────────────────────────────────────────────
+        self.uh_table = QTableWidget(0, 12)
+        self.uh_table.setHorizontalHeaderLabels([
+            "ID", "Data", "Utente", "Cliente", "Commessa", "Attività",
+            "Ore", "Tariffa", "Ricavo", "Costo ut.", "Margine", "Note",
+        ])
+        self.uh_table.setAlternatingRowColors(True)
+        self.uh_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.uh_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self.uh_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.uh_table.setColumnHidden(0, True)
+        hh = self.uh_table.horizontalHeader()
+        if hh:
+            hh.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+            hh.setSectionResizeMode(11, QHeaderView.ResizeMode.Stretch)
+        layout.addWidget(self.uh_table, 1)
+
+        # ── Barra azioni + footer ────────────────────────────────────────────
+        bottom_row = QHBoxLayout()
+        btn_edit = QPushButton("Modifica selezionata")
+        self.apply_edit_button_style(btn_edit)
+        btn_edit.clicked.connect(self._uh_edit_selected)
+        bottom_row.addWidget(btn_edit)
+        btn_del = QPushButton("Elimina selezionata")
+        btn_del.clicked.connect(self._uh_delete_selected)
+        bottom_row.addWidget(btn_del)
+        bottom_row.addStretch(1)
+        self.uh_footer_label = QLabel("")
+        bottom_row.addWidget(self.uh_footer_label)
+        layout.addLayout(bottom_row)
+
+        self._uh_populate_client_combo()
+        self.refresh_user_hours_data()
+
+    def _uh_populate_client_combo(self) -> None:
+        if not hasattr(self, "uh_client_combo"):
+            return
+        clients = self.db.list_clients()
+        self._set_combo_items(self.uh_client_combo, [("Tutti", None)] + [(c["name"], c["id"]) for c in clients])
+
+    def _uh_on_client_change(self, _index: int = 0) -> None:
+        if not hasattr(self, "uh_project_combo"):
+            return
+        client_id = self._id_from_combo(self.uh_client_combo)
+        if client_id:
+            projects = self.db.list_projects(client_id=client_id)
+            self._set_combo_items(self.uh_project_combo, [("Tutti", None)] + [(p["name"], p["id"]) for p in projects])
+        else:
+            self._set_combo_items(self.uh_project_combo, [("Tutti", None)])
+        self._set_combo_items(self.uh_activity_combo, [("Tutti", None)])
+
+    def _uh_on_project_change(self, _index: int = 0) -> None:
+        if not hasattr(self, "uh_activity_combo"):
+            return
+        project_id = self._id_from_combo(self.uh_project_combo)
+        if project_id:
+            activities = self.db.list_activities(project_id=project_id)
+            self._set_combo_items(self.uh_activity_combo, [("Tutti", None)] + [(a["name"], a["id"]) for a in activities])
+        else:
+            self._set_combo_items(self.uh_activity_combo, [("Tutti", None)])
+
+    def _uh_reset_filters(self) -> None:
+        self.uh_date_from.setDate(QDate(2000, 1, 1))
+        self.uh_date_to.setDate(QDate(2000, 1, 1))
+        self.uh_user_combo.setCurrentIndex(0)
+        self._set_combo_items(self.uh_client_combo, [("Tutti", None)] + [(c["name"], c["id"]) for c in self.db.list_clients()])
+        self._set_combo_items(self.uh_project_combo, [("Tutti", None)])
+        self._set_combo_items(self.uh_activity_combo, [("Tutti", None)])
+        self.refresh_user_hours_data()
+
+    def refresh_user_hours_data(self) -> None:
+        if not hasattr(self, "uh_table"):
+            return
+
+        _empty = QDate(2000, 1, 1)
+        date_from = None if self.uh_date_from.date() == _empty else self.uh_date_from.date().toString("yyyy-MM-dd")
+        date_to = None if self.uh_date_to.date() == _empty else self.uh_date_to.date().toString("yyyy-MM-dd")
+        user_id = self._id_from_combo(self.uh_user_combo)
+        client_id = self._id_from_combo(self.uh_client_combo)
+        project_id = self._id_from_combo(self.uh_project_combo)
+        activity_id = self._id_from_combo(self.uh_activity_combo)
+
+        rows = self.db.list_timesheets_all(
+            user_id=user_id,
+            client_id=client_id,
+            project_id=project_id,
+            activity_id=activity_id,
+            date_from=date_from,
+            date_to=date_to,
+        )
+
+        self.uh_table.setRowCount(0)
+        total_hours = total_ricavo = total_costo = 0.0
+
+        for row in rows:
+            ucr = float(row.get("user_cost_rate", 0) or 0)
+            uc = float(row.get("user_cost", 0) or 0)
+            ricavo = float(row.get("cost", 0) or 0)
+            costo_str = f"{uc:.2f}" if ucr > 0 else "N/D"
+            margine_str = f"{ricavo - uc:.2f}" if ucr > 0 else "N/D"
+
+            total_hours += float(row["hours"])
+            total_ricavo += ricavo
+            if ucr > 0:
+                total_costo += uc
+
+            idx = self.uh_table.rowCount()
+            self.uh_table.insertRow(idx)
+            try:
+                from datetime import datetime as _dt
+                data_display = _dt.strptime(row["work_date"], "%Y-%m-%d").strftime("%d/%m/%Y")
+            except Exception:
+                data_display = row["work_date"]
+            values = [
+                row["id"],
+                data_display,
+                row.get("full_name") or row["username"],
+                row["client_name"],
+                row["project_name"],
+                row["activity_name"],
+                f"{float(row['hours']):.2f}",
+                f"{float(row['effective_rate']):.2f}",
+                f"{ricavo:.2f}",
+                costo_str,
+                margine_str,
+                row.get("note") or "",
+            ]
+            for col, val in enumerate(values):
+                self.uh_table.setItem(idx, col, _readonly_item(val))
+
+        total_margine = total_ricavo - total_costo
+        self.uh_footer_label.setText(
+            f"Righe: {self.uh_table.rowCount()} | Ore: {total_hours:.2f} | "
+            f"Ricavo: {total_ricavo:.2f} € | Costo: {total_costo:.2f} € | Margine: {total_margine:.2f} €"
+        )
+
+    def _uh_edit_selected(self) -> None:
+        entry_id = self._selected_table_id(self.uh_table)
+        if not entry_id:
+            QMessageBox.warning(self, "Gestione Ore Utenti", "Seleziona una riga da modificare.")
+            return
+        self._uh_edit_dialog(entry_id)
+
+    def _uh_delete_selected(self) -> None:
+        entry_id = self._selected_table_id(self.uh_table)
+        if not entry_id:
+            QMessageBox.warning(self, "Gestione Ore Utenti", "Seleziona una riga da eliminare.")
+            return
+        reply = QMessageBox.question(
+            self, "Gestione Ore Utenti",
+            "Eliminare l'inserimento ore selezionato?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            self.db.delete_timesheet(entry_id, user_id=0, is_admin=True)
+            self.refresh_user_hours_data()
+            self.refresh_day_entries()
+            self._refresh_month_hours()
+
+    def _uh_edit_dialog(self, entry_id: int) -> None:
+        # Recupera la riga originale dalla tabella
+        rows = self.db.list_timesheets_all()
+        row = next((r for r in rows if int(r["id"]) == entry_id), None)
+        if not row:
+            return
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Modifica inserimento ore")
+        dlg.setMinimumWidth(480)
+        form = QFormLayout(dlg)
+        form.setSpacing(10)
+        form.setContentsMargins(16, 16, 16, 16)
+
+        # Utente (sola lettura)
+        form.addRow("Utente:", QLabel(row.get("full_name") or row["username"]))
+
+        # Data
+        date_edit = QDateEdit()
+        date_edit.setDisplayFormat("dd/MM/yyyy")
+        date_edit.setCalendarPopup(True)
+        _apply_calendar_popup_palette(date_edit, self.is_dark_mode)
+        try:
+            from datetime import datetime as _dt
+            qd = _dt.strptime(row["work_date"], "%Y-%m-%d")
+            date_edit.setDate(QDate(qd.year, qd.month, qd.day))
+        except Exception:
+            date_edit.setDate(QDate.currentDate())
+        form.addRow("Data:", date_edit)
+
+        # Cliente
+        dlg_client_combo = QComboBox()
+        clients = self.db.list_clients()
+        self._set_combo_items(dlg_client_combo, [(c["name"], c["id"]) for c in clients])
+
+        # Commessa
+        dlg_project_combo = QComboBox()
+
+        # Attività
+        dlg_activity_combo = QComboBox()
+
+        def _dlg_on_client(_idx: int = 0) -> None:
+            cid = self._id_from_combo(dlg_client_combo)
+            if cid:
+                projs = self.db.list_projects(client_id=cid)
+                self._set_combo_items(dlg_project_combo, [(p["name"], p["id"]) for p in projs])
+            else:
+                self._set_combo_items(dlg_project_combo, [])
+            self._set_combo_items(dlg_activity_combo, [])
+
+        def _dlg_on_project(_idx: int = 0) -> None:
+            pid = self._id_from_combo(dlg_project_combo)
+            if pid:
+                acts = self.db.list_activities(project_id=pid)
+                self._set_combo_items(dlg_activity_combo, [(a["name"], a["id"]) for a in acts])
+            else:
+                self._set_combo_items(dlg_activity_combo, [])
+
+        dlg_client_combo.currentIndexChanged.connect(_dlg_on_client)
+        dlg_project_combo.currentIndexChanged.connect(_dlg_on_project)
+
+        # Imposta selezione iniziale
+        self._set_combo_by_id(dlg_client_combo, int(row["client_id"]))
+        _dlg_on_client(0)
+        self._set_combo_by_id(dlg_project_combo, int(row["project_id"]))
+        _dlg_on_project(0)
+        self._set_combo_by_id(dlg_activity_combo, int(row["activity_id"]))
+
+        form.addRow("Cliente:", dlg_client_combo)
+        form.addRow("Commessa:", dlg_project_combo)
+        form.addRow("Attività:", dlg_activity_combo)
+
+        # Ore
+        ore_entry = QLineEdit(f"{float(row['hours']):.2f}")
+        form.addRow("Ore:", ore_entry)
+
+        # Note
+        note_edit = QTextEdit()
+        note_edit.setPlainText(row.get("note") or "")
+        note_edit.setFixedHeight(70)
+        form.addRow("Note:", note_edit)
+
+        # Bottoni
+        btn_row = QHBoxLayout()
+        btn_save = QPushButton("Salva")
+        self._set_button_role(btn_save, "btn_primary")
+        btn_cancel = QPushButton("Annulla")
+        btn_cancel.clicked.connect(dlg.reject)
+        btn_row.addWidget(btn_save)
+        btn_row.addWidget(btn_cancel)
+        btn_row.addStretch(1)
+        form.addRow(btn_row)
+
+        def _save() -> None:
+            try:
+                cid = self._id_from_combo(dlg_client_combo)
+                pid = self._id_from_combo(dlg_project_combo)
+                aid = self._id_from_combo(dlg_activity_combo)
+                if not (cid and pid and aid):
+                    raise ValueError("Seleziona cliente, commessa e attività.")
+                hours = self._to_float(ore_entry.text().strip(), "Ore")
+                if hours <= 0:
+                    raise ValueError("Ore deve essere > 0.")
+                work_date = date_edit.date().toString("yyyy-MM-dd")
+                note = note_edit.toPlainText().strip()
+                self.db.update_timesheet(
+                    entry_id=entry_id,
+                    user_id=int(row["user_id"]),
+                    is_admin=True,
+                    work_date=work_date,
+                    client_id=cid,
+                    project_id=pid,
+                    activity_id=aid,
+                    hours=hours,
+                    note=note,
+                )
+                dlg.accept()
+                self.refresh_user_hours_data()
+                self.refresh_day_entries()
+                self._refresh_month_hours()
+            except (ValueError, Exception) as exc:
+                QMessageBox.critical(dlg, "Modifica", str(exc))
+
+        btn_save.clicked.connect(_save)
+        dlg.exec()
+
     # Utenti
     def build_users_tab(self) -> None:
         layout = QVBoxLayout(self.tab_users)
@@ -4150,6 +4507,9 @@ class TimesheetWindow(QMainWindow):
         self.tab_diary_check = QCheckBox("Diario")
         self.tab_diary_check.setChecked(True)
         tabs_row.addWidget(self.tab_diary_check)
+        self.tab_user_hours_check = QCheckBox("Gestione Ore Utenti")
+        self.tab_user_hours_check.setChecked(False)
+        tabs_row.addWidget(self.tab_user_hours_check)
         btn_tabs = QPushButton("Salva permessi")
         btn_tabs.clicked.connect(self.save_user_tabs)
         tabs_row.addWidget(btn_tabs)
@@ -4246,6 +4606,7 @@ class TimesheetWindow(QMainWindow):
         self.tab_master_check.setChecked(bool(selected.get("tab_master", 1)))
         self.tab_control_check.setChecked(bool(selected.get("tab_control", 1)))
         self.tab_diary_check.setChecked(bool(selected.get("tab_diary", 1)))
+        self.tab_user_hours_check.setChecked(bool(selected.get("tab_user_hours", 0)))
         self.refresh_user_cost_rates()
 
     def refresh_user_cost_rates(self) -> None:
@@ -4304,6 +4665,7 @@ class TimesheetWindow(QMainWindow):
                 self.tab_master_check.isChecked(),
                 self.tab_control_check.isChecked(),
                 self.tab_diary_check.isChecked(),
+                self.tab_user_hours_check.isChecked(),
             )
             self.refresh_users_data()
             QMessageBox.information(self, "Utenti", "Permessi aggiornati. L'utente deve rifare il login per applicare le modifiche.")
@@ -4338,15 +4700,15 @@ class TimesheetWindow(QMainWindow):
                 if not password:
                     raise ValueError("Compila la password per il nuovo utente.")
                 if role == "admin":
-                    self.db.create_user(username, full_name, role, password, True, True, True, True)
+                    self.db.create_user(username, full_name, role, password, True, True, True, True, True)
                 else:
-                    self.db.create_user(username, full_name, role, password, self.tab_calendar_check.isChecked(), self.tab_master_check.isChecked(), self.tab_control_check.isChecked(), self.tab_diary_check.isChecked())
+                    self.db.create_user(username, full_name, role, password, self.tab_calendar_check.isChecked(), self.tab_master_check.isChecked(), self.tab_control_check.isChecked(), self.tab_diary_check.isChecked(), self.tab_user_hours_check.isChecked())
                 QMessageBox.information(self, "Utenti", "Utente creato con successo.")
             else:
                 if role == "admin":
-                    self.db.update_user(self.editing_user_id, username, full_name, role, True, True, True, True)
+                    self.db.update_user(self.editing_user_id, username, full_name, role, True, True, True, True, True)
                 else:
-                    self.db.update_user(self.editing_user_id, username, full_name, role, self.tab_calendar_check.isChecked(), self.tab_master_check.isChecked(), self.tab_control_check.isChecked(), self.tab_diary_check.isChecked())
+                    self.db.update_user(self.editing_user_id, username, full_name, role, self.tab_calendar_check.isChecked(), self.tab_master_check.isChecked(), self.tab_control_check.isChecked(), self.tab_diary_check.isChecked(), self.tab_user_hours_check.isChecked())
                 QMessageBox.information(self, "Utenti", "Utente modificato con successo.")
         except (ValueError, sqlite3.IntegrityError) as exc:
             QMessageBox.critical(self, "Utenti", str(exc))
@@ -4376,6 +4738,7 @@ class TimesheetWindow(QMainWindow):
         self.tab_master_check.setChecked(bool(selected.get("tab_master", 1)))
         self.tab_control_check.setChecked(bool(selected.get("tab_control", 1)))
         self.tab_diary_check.setChecked(bool(selected.get("tab_diary", 1)))
+        self.tab_user_hours_check.setChecked(bool(selected.get("tab_user_hours", 0)))
         self.save_user_button.setText("Salva modifiche")
         self.apply_edit_button_style(self.save_user_button)
 
@@ -4389,6 +4752,7 @@ class TimesheetWindow(QMainWindow):
         self.tab_master_check.setChecked(True)
         self.tab_control_check.setChecked(True)
         self.tab_diary_check.setChecked(True)
+        self.tab_user_hours_check.setChecked(False)
         self.save_user_button.setText("Crea utente")
         self._set_button_role(self.save_user_button, "btn_primary")
 
@@ -4440,6 +4804,9 @@ class TimesheetWindow(QMainWindow):
             self.refresh_programming_options()
         if hasattr(self, "diary_client_combo"):
             self._diary_populate_combos()
+        if hasattr(self, "uh_client_combo"):
+            self._uh_populate_client_combo()
+            self.refresh_user_hours_data()
         self.refresh_day_entries()
         self.refresh_schedule_list()
         self.refresh_control_panel()

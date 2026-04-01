@@ -363,6 +363,9 @@ class Database:
         if "tab_diary" not in columns:
             self.conn.execute("ALTER TABLE users ADD COLUMN tab_diary INTEGER NOT NULL DEFAULT 1 CHECK(tab_diary IN (0, 1))")
             self.conn.commit()
+        if "tab_user_hours" not in columns:
+            self.conn.execute("ALTER TABLE users ADD COLUMN tab_user_hours INTEGER NOT NULL DEFAULT 0 CHECK(tab_user_hours IN (0, 1))")
+            self.conn.commit()
 
         # Aggiungi activity_id a user_project_assignments per assegnazioni specifiche alle attività
         cursor = self.conn.execute("PRAGMA table_info(user_project_assignments)")
@@ -435,6 +438,27 @@ class Database:
         """)
         self.conn.commit()
 
+        # Backfill user_cost_rate/user_cost per inserimenti precedenti (user_cost_rate = 0)
+        self._backfill_user_costs()
+
+    def _backfill_user_costs(self) -> None:
+        """Aggiorna user_cost_rate e user_cost per i timesheet dove non sono ancora calcolati."""
+        rows = self.conn.execute(
+            "SELECT id, user_id, work_date, hours FROM timesheets WHERE user_cost_rate = 0"
+        ).fetchall()
+        updated = 0
+        for row in rows:
+            rate = self.resolve_user_cost_rate(row["user_id"], row["work_date"])
+            if rate > 0:
+                cost = round(row["hours"] * rate, 2)
+                self.conn.execute(
+                    "UPDATE timesheets SET user_cost_rate = ?, user_cost = ? WHERE id = ?",
+                    (rate, cost, row["id"]),
+                )
+                updated += 1
+        if updated:
+            self.conn.commit()
+
     def _seed_admin(self) -> None:
         row = self.conn.execute("SELECT id FROM users LIMIT 1").fetchone()
         if row:
@@ -461,7 +485,7 @@ class Database:
         row = self._fetchone(
             """
             SELECT id, username, full_name, role, active, password_hash,
-                   tab_calendar, tab_master, tab_control, tab_diary
+                   tab_calendar, tab_master, tab_control, tab_diary, tab_user_hours
             FROM users
             WHERE username = ? AND active = 1
             """,
@@ -482,7 +506,7 @@ class Database:
         return row
 
     def list_users(self, include_inactive: bool = True) -> list[dict[str, Any]]:
-        query = "SELECT id, username, full_name, role, active, tab_calendar, tab_master, tab_control, tab_diary FROM users"
+        query = "SELECT id, username, full_name, role, active, tab_calendar, tab_master, tab_control, tab_diary, tab_user_hours FROM users"
         if not include_inactive:
             query += " WHERE active = 1"
         query += " ORDER BY username"
@@ -498,11 +522,12 @@ class Database:
         tab_master: bool = True,
         tab_control: bool = True,
         tab_diary: bool = True,
+        tab_user_hours: bool = False,
     ) -> None:
         self.conn.execute(
             """
-            INSERT INTO users (username, full_name, role, password_hash, active, tab_calendar, tab_master, tab_plan, tab_control, tab_diary)
-            VALUES (?, ?, ?, ?, 1, ?, ?, 1, ?, ?)
+            INSERT INTO users (username, full_name, role, password_hash, active, tab_calendar, tab_master, tab_plan, tab_control, tab_diary, tab_user_hours)
+            VALUES (?, ?, ?, ?, 1, ?, ?, 1, ?, ?, ?)
             """,
             (
                 username.strip(),
@@ -513,6 +538,7 @@ class Database:
                 1 if tab_master else 0,
                 1 if tab_control else 0,
                 1 if tab_diary else 0,
+                1 if tab_user_hours else 0,
             ),
         )
         self.conn.commit()
@@ -527,12 +553,13 @@ class Database:
         tab_master: bool = True,
         tab_control: bool = True,
         tab_diary: bool = True,
+        tab_user_hours: bool = False,
     ) -> None:
         """Aggiorna i dati di un utente (senza password)."""
         self.conn.execute(
             """
             UPDATE users
-            SET username = ?, full_name = ?, role = ?, tab_calendar = ?, tab_master = ?, tab_control = ?, tab_diary = ?
+            SET username = ?, full_name = ?, role = ?, tab_calendar = ?, tab_master = ?, tab_control = ?, tab_diary = ?, tab_user_hours = ?
             WHERE id = ?
             """,
             (
@@ -543,6 +570,7 @@ class Database:
                 1 if tab_master else 0,
                 1 if tab_control else 0,
                 1 if tab_diary else 0,
+                1 if tab_user_hours else 0,
                 user_id,
             ),
         )
@@ -569,11 +597,12 @@ class Database:
         tab_master: bool,
         tab_control: bool,
         tab_diary: bool,
+        tab_user_hours: bool = False,
     ) -> None:
         """Aggiorna i permessi tab per un utente."""
         self.conn.execute(
-            "UPDATE users SET tab_calendar = ?, tab_master = ?, tab_control = ?, tab_diary = ? WHERE id = ?",
-            (1 if tab_calendar else 0, 1 if tab_master else 0, 1 if tab_control else 0, 1 if tab_diary else 0, user_id),
+            "UPDATE users SET tab_calendar = ?, tab_master = ?, tab_control = ?, tab_diary = ?, tab_user_hours = ? WHERE id = ?",
+            (1 if tab_calendar else 0, 1 if tab_master else 0, 1 if tab_control else 0, 1 if tab_diary else 0, 1 if tab_user_hours else 0, user_id),
         )
         self.conn.commit()
 
@@ -1080,6 +1109,56 @@ class Database:
                 (entry_id, user_id),
             )
         self.conn.commit()
+
+    def list_timesheets_all(
+        self,
+        user_id: int | None = None,
+        client_id: int | None = None,
+        project_id: int | None = None,
+        activity_id: int | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+    ) -> list[dict[str, Any]]:
+        conditions: list[str] = []
+        params: list[Any] = []
+        if user_id is not None:
+            conditions.append("t.user_id = ?")
+            params.append(user_id)
+        if client_id is not None:
+            conditions.append("t.client_id = ?")
+            params.append(client_id)
+        if project_id is not None:
+            conditions.append("t.project_id = ?")
+            params.append(project_id)
+        if activity_id is not None:
+            conditions.append("t.activity_id = ?")
+            params.append(activity_id)
+        if date_from:
+            conditions.append("t.work_date >= ?")
+            params.append(date_from)
+        if date_to:
+            conditions.append("t.work_date <= ?")
+            params.append(date_to)
+        where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+        return self._fetchall(
+            f"""
+            SELECT t.id, t.user_id, t.client_id, t.project_id, t.activity_id,
+                   t.work_date, t.hours, t.note, t.effective_rate, t.cost,
+                   t.user_cost_rate, t.user_cost,
+                   u.username, u.full_name,
+                   c.name AS client_name,
+                   p.name AS project_name,
+                   a.name AS activity_name
+            FROM timesheets t
+            JOIN users u ON u.id = t.user_id
+            JOIN clients c ON c.id = t.client_id
+            JOIN projects p ON p.id = t.project_id
+            JOIN activities a ON a.id = t.activity_id
+            {where}
+            ORDER BY t.work_date DESC, u.username
+            """,
+            tuple(params),
+        )
 
     def list_timesheets_for_day(self, work_date: str, user_id: int | None = None) -> list[dict[str, Any]]:
         params: list[Any] = [work_date]

@@ -1,4 +1,4 @@
-# APP Timesheet - v3.8.4
+# APP Timesheet - v3.8.5
 
 Applicazione desktop Python con UI `PyQt6` per:
 
@@ -7,6 +7,13 @@ Applicazione desktop Python con UI `PyQt6` per:
 - gestione programmazione ore su commessa/attivita
 - strumenti di controllo (consuntivo, pianificato, costi, scostamenti)
 - piattaforma multiutente con ruoli `admin` e `user`
+
+## Novita v3.8.5 — 2026-04-01
+
+- gestione utenti: visibilità del tab "Gestione Ore Utenti" ora gestita tramite permessi tab come gli altri tab (Calendario Ore, Gestione Commesse, Controllo, Diario).
+- aggiunta checkbox "Gestione Ore Utenti" nella riga permessi utente; default disabilitato per utenti non-admin.
+- db: aggiunta colonna `tab_user_hours` con migrazione automatica (default `0`).
+- rimosso il pannello "Visibilità in Gestione Ore Utenti" dalla tab Gestione Utenti (sostituito dalla gestione permessi standard).
 
 ## Novita v3.8.4 — 2026-03-30
 
