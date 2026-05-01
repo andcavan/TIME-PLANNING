@@ -410,6 +410,29 @@ class Database:
         """)
         self.conn.commit()
 
+        # Migrazione: aggiunge client_id a user_cost_rates e ricrea la tabella con nuovo UNIQUE
+        cursor = self.conn.execute("PRAGMA table_info(user_cost_rates)")
+        ucr_columns = [row[1] for row in cursor.fetchall()]
+        if "client_id" not in ucr_columns:
+            self.conn.execute("""
+                CREATE TABLE user_cost_rates_new (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    client_id   INTEGER REFERENCES clients(id) ON DELETE CASCADE,
+                    hourly_cost REAL    NOT NULL CHECK(hourly_cost > 0),
+                    valid_from  TEXT    NOT NULL,
+                    created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+                    UNIQUE(user_id, client_id, valid_from)
+                )
+            """)
+            self.conn.execute("""
+                INSERT INTO user_cost_rates_new (id, user_id, client_id, hourly_cost, valid_from, created_at)
+                SELECT id, user_id, NULL, hourly_cost, valid_from, created_at FROM user_cost_rates
+            """)
+            self.conn.execute("DROP TABLE user_cost_rates")
+            self.conn.execute("ALTER TABLE user_cost_rates_new RENAME TO user_cost_rates")
+            self.conn.commit()
+
         # Aggiungi user_cost_rate e user_cost a timesheets
         cursor = self.conn.execute("PRAGMA table_info(timesheets)")
         ts_columns = [row[1] for row in cursor.fetchall()]
@@ -444,11 +467,11 @@ class Database:
     def _backfill_user_costs(self) -> None:
         """Aggiorna user_cost_rate e user_cost per i timesheet dove non sono ancora calcolati."""
         rows = self.conn.execute(
-            "SELECT id, user_id, work_date, hours FROM timesheets WHERE user_cost_rate = 0"
+            "SELECT id, user_id, client_id, work_date, hours FROM timesheets WHERE user_cost_rate = 0"
         ).fetchall()
         updated = 0
         for row in rows:
-            rate = self.resolve_user_cost_rate(row["user_id"], row["work_date"])
+            rate = self.resolve_user_cost_rate(row["user_id"], row["work_date"], row["client_id"])
             if rate > 0:
                 cost = round(row["hours"] * rate, 2)
                 self.conn.execute(
@@ -999,32 +1022,58 @@ class Database:
             return float(row["project_rate"])
         return float(row["client_rate"])
 
-    def resolve_user_cost_rate(self, user_id: int, work_date: str) -> float:
-        """Restituisce il costo orario dell'utente valido per work_date, oppure 0.0 se non definito."""
+    def resolve_user_cost_rate(self, user_id: int, work_date: str, client_id: int | None = None) -> float:
+        """Restituisce il costo orario dell'utente valido per work_date.
+        Cerca prima un rate specifico per il cliente; se non trovato usa il rate di default (client_id IS NULL).
+        Ritorna 0.0 se non definito."""
+        if client_id is not None:
+            row = self._fetchone(
+                """
+                SELECT hourly_cost FROM user_cost_rates
+                WHERE user_id = ? AND client_id = ? AND valid_from <= ?
+                ORDER BY valid_from DESC LIMIT 1
+                """,
+                (user_id, client_id, work_date),
+            )
+            if row:
+                return float(row["hourly_cost"])
         row = self._fetchone(
             """
             SELECT hourly_cost FROM user_cost_rates
-            WHERE user_id = ? AND valid_from <= ?
+            WHERE user_id = ? AND client_id IS NULL AND valid_from <= ?
             ORDER BY valid_from DESC LIMIT 1
             """,
             (user_id, work_date),
         )
         return float(row["hourly_cost"]) if row else 0.0
 
-    def add_user_cost_rate(self, user_id: int, hourly_cost: float, valid_from: str) -> None:
-        self.conn.execute(
-            """
-            INSERT INTO user_cost_rates (user_id, hourly_cost, valid_from)
-            VALUES (?, ?, ?)
-            ON CONFLICT(user_id, valid_from) DO UPDATE SET hourly_cost = excluded.hourly_cost
-            """,
-            (user_id, hourly_cost, valid_from),
+    def add_user_cost_rate(self, user_id: int, hourly_cost: float, valid_from: str, client_id: int | None = None) -> None:
+        # SQLite UNIQUE con NULL non funziona con ON CONFLICT standard; gestiamo manualmente
+        existing = self._fetchone(
+            "SELECT id FROM user_cost_rates WHERE user_id = ? AND client_id IS ? AND valid_from = ?",
+            (user_id, client_id, valid_from),
         )
+        if existing:
+            self.conn.execute(
+                "UPDATE user_cost_rates SET hourly_cost = ? WHERE id = ?",
+                (hourly_cost, existing["id"]),
+            )
+        else:
+            self.conn.execute(
+                "INSERT INTO user_cost_rates (user_id, client_id, hourly_cost, valid_from) VALUES (?, ?, ?, ?)",
+                (user_id, client_id, hourly_cost, valid_from),
+            )
         self.conn.commit()
 
     def list_user_cost_rates(self, user_id: int) -> list[dict]:
         return self._fetchall(
-            "SELECT id, hourly_cost, valid_from FROM user_cost_rates WHERE user_id = ? ORDER BY valid_from DESC",
+            """
+            SELECT ucr.id, ucr.client_id, c.name as client_name, ucr.hourly_cost, ucr.valid_from
+            FROM user_cost_rates ucr
+            LEFT JOIN clients c ON c.id = ucr.client_id
+            WHERE ucr.user_id = ?
+            ORDER BY ucr.client_id IS NULL DESC, c.name, ucr.valid_from DESC
+            """,
             (user_id,),
         )
 
@@ -1044,7 +1093,7 @@ class Database:
     ) -> None:
         rate = self.resolve_effective_rate(client_id, project_id, activity_id)
         cost = round(hours * rate, 2)
-        user_cost_rate = self.resolve_user_cost_rate(user_id, work_date)
+        user_cost_rate = self.resolve_user_cost_rate(user_id, work_date, client_id)
         user_cost = round(hours * user_cost_rate, 2) if user_cost_rate else 0.0
         self.conn.execute(
             """
@@ -1072,7 +1121,7 @@ class Database:
     ) -> None:
         rate = self.resolve_effective_rate(client_id, project_id, activity_id)
         cost = round(hours * rate, 2)
-        user_cost_rate = self.resolve_user_cost_rate(user_id, work_date)
+        user_cost_rate = self.resolve_user_cost_rate(user_id, work_date, client_id)
         user_cost = round(hours * user_cost_rate, 2) if user_cost_rate else 0.0
         if is_admin:
             cursor = self.conn.execute(

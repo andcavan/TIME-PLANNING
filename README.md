@@ -1,4 +1,4 @@
-# APP Timesheet - v3.8.5
+# APP Timesheet - v3.8.6
 
 Applicazione desktop Python con UI `PyQt6` per:
 
@@ -7,6 +7,14 @@ Applicazione desktop Python con UI `PyQt6` per:
 - gestione programmazione ore su commessa/attivita
 - strumenti di controllo (consuntivo, pianificato, costi, scostamenti)
 - piattaforma multiutente con ruoli `admin` e `user`
+
+## Novita v3.8.6 — 2026-05-01
+
+- costo utente storicizzato collegato al cliente: ogni utente può avere un costo orario diverso per ciascun cliente.
+- db: migrazione automatica tabella `user_cost_rates` con aggiunta colonna `client_id` (nullable; NULL = tariffa default valida per tutti i clienti).
+- db: `resolve_user_cost_rate` usa cascade — cerca prima la tariffa specifica per cliente, poi quella di default.
+- db: `add_timesheet` e `update_timesheet` passano `client_id` alla risoluzione del costo utente.
+- ui: tab Gestione Utenti — aggiunta colonna "Cliente" nella tabella storico tariffe e combobox di selezione cliente nel form di inserimento (opzione "Default" per tariffa globale).
 
 ## Novita v3.8.5 — 2026-04-01
 

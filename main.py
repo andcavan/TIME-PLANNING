@@ -4554,8 +4554,8 @@ class TimesheetWindow(QMainWindow):
         cost_group = QGroupBox("Costo orario utente (storico)")
         cost_layout = QVBoxLayout(cost_group)
 
-        self.user_cost_rates_table = QTableWidget(0, 3)
-        self.user_cost_rates_table.setHorizontalHeaderLabels(["ID", "Valido dal", "Costo €/h"])
+        self.user_cost_rates_table = QTableWidget(0, 4)
+        self.user_cost_rates_table.setHorizontalHeaderLabels(["ID", "Cliente", "Valido dal", "Costo €/h"])
         self.user_cost_rates_table.setAlternatingRowColors(True)
         self.user_cost_rates_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.user_cost_rates_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
@@ -4572,6 +4572,10 @@ class TimesheetWindow(QMainWindow):
         self.cost_rate_date_edit.setDate(QDate.currentDate())
         self.cost_rate_date_edit.setCalendarPopup(True)
         add_rate_row.addWidget(self.cost_rate_date_edit)
+        add_rate_row.addWidget(QLabel("Cliente:"))
+        self.cost_rate_client_combo = QComboBox()
+        self.cost_rate_client_combo.setMinimumWidth(140)
+        add_rate_row.addWidget(self.cost_rate_client_combo)
         add_rate_row.addWidget(QLabel("Costo €/h:"))
         self.cost_rate_value_entry = QLineEdit()
         self.cost_rate_value_entry.setPlaceholderText("es. 25.00")
@@ -4614,6 +4618,14 @@ class TimesheetWindow(QMainWindow):
             return
         user_id = self._selected_table_id(self.users_table)
         self.user_cost_rates_table.setRowCount(0)
+        # Aggiorna combobox clienti
+        if hasattr(self, "cost_rate_client_combo"):
+            self.cost_rate_client_combo.blockSignals(True)
+            self.cost_rate_client_combo.clear()
+            self.cost_rate_client_combo.addItem("Default (tutti i clienti)", None)
+            for c in self.db.list_clients():
+                self.cost_rate_client_combo.addItem(c["name"], c["id"])
+            self.cost_rate_client_combo.blockSignals(False)
         if not user_id:
             return
         rates = self.db.list_user_cost_rates(user_id)
@@ -4626,7 +4638,8 @@ class TimesheetWindow(QMainWindow):
                 valid_from_display = _dt.strptime(rate["valid_from"], "%Y-%m-%d").strftime("%d/%m/%Y")
             except Exception:
                 pass
-            for col, val in enumerate([rate["id"], valid_from_display, f"{rate['hourly_cost']:.2f}"]):
+            client_name = rate.get("client_name") or "Default"
+            for col, val in enumerate([rate["id"], client_name, valid_from_display, f"{rate['hourly_cost']:.2f}"]):
                 self.user_cost_rates_table.setItem(idx, col, _readonly_item(val))
 
     def add_user_cost_rate_ui(self) -> None:
@@ -4639,7 +4652,8 @@ class TimesheetWindow(QMainWindow):
             if cost <= 0:
                 raise ValueError("Il costo deve essere maggiore di zero.")
             valid_from = self.cost_rate_date_edit.date().toString("yyyy-MM-dd")
-            self.db.add_user_cost_rate(user_id, cost, valid_from)
+            client_id = self.cost_rate_client_combo.currentData() if hasattr(self, "cost_rate_client_combo") else None
+            self.db.add_user_cost_rate(user_id, cost, valid_from, client_id)
             self.cost_rate_value_entry.clear()
             self.refresh_user_cost_rates()
         except (ValueError, Exception) as exc:
